@@ -1,4 +1,9 @@
-#### 1. packages/protocol
+> **【已废弃——仅作历史参考】** 2026-11 同步上游后，`packages/protocol`（以及 server/client/session-backends）已从仓库删除。
+> 进程间通信现在由 `packages/chord` 的 link 层负责（见 [`packages/chord/src/link/`](file:///Users/mac/Agent/niannian/pi-learning/packages/chord/src/link)）。
+> 本文中的文件链接已失效，但"消息边界 + 格式校验 + 编解码"的设计思路仍适用于理解新的 link 层。
+> telemetry 部分（本文后半）仍然有效，`packages/telemetry` 未变。
+
+#### 1. packages/protocol（已删除）
 
 理解进程间通信的基础。
 

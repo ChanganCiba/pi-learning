@@ -2,6 +2,11 @@
 
 本指南提供了系统学习 Pi Agent Harness 框架源码的推荐路径。
 
+> **2026-11 更新说明**：同步上游最新代码后仓库结构有大变动。
+> - **已删除**：`protocol`、`server`、`client`、`session-backends` 包（旧的 CBOR 协议/WebSocket 服务端架构已被 Chord/Durable 取代）
+> - **【新增】核心板块**：`schema`（JSON Schema 校验）、`mcp`（MCP 客户端）、`codemode`（沙箱 JS 执行）、`durable`（持久化会话运行时）、`env`（远程执行环境）、`chord`（跨进程对象运行时）、`evals`（评测框架），以及 `apps/` 下的 `p2`、`p2-mac`、`p3` 应用
+> 下文带 **【新增】** 标记的章节是本次新引入的内容；`protocol.md` 笔记对应的包已不存在，仅作历史参考。
+
 ## 目录
 
 - [架构概览](#架构概览)
@@ -15,47 +20,57 @@
 Pi 是一个模块化的 agent harness 框架，采用 monorepo 结构：
 
 ```
-protocol (通信协议)
-   ↓
+schema (JSON Schema 校验)   telemetry (遥测)
+        ↓
 ai (LLM 统一 API)
-   ↓
-agent (Agent 运行时) ← telemetry (遥测)
-   ↓
-coding-agent (完整 CLI) + tui (终端 UI)
-   ↓
-server (WebSocket 服务器) + client (客户端库)
+        ↓
+agent (Agent 运行时)
+        ↓
+coding-agent (完整 CLI) ← tui (终端 UI) + mcp (MCP 客户端)
+        ↓
+durable (持久化会话运行时) ← codemode (沙箱执行) + env (远程执行环境)
+        ↓
+chord (跨进程对象运行时) → apps/p2、apps/p3 (自托管 UI / 个人服务器)
 ```
 
 ### 包职责
 
 | 包 | 职责 |
 |---|---|
-| `protocol` | 定义 CBOR 消息协议和类型模式 |
-| `ai` | 统一多个 LLM 提供商（OpenAI、Anthropic、Google、Bedrock）的 API |
+| `schema` 【新增】 | 不用 eval 的 JSON Schema 校验（draft 2020-12 / 7，编译为普通闭包） |
+| `ai` | 统一多个 LLM 提供商（OpenAI、Anthropic、Google、Bedrock 等 40+）的 API |
 | `agent` | Agent 核心运行时：工具调用、状态管理、消息循环 |
 | `tui` | 终端 UI 库，支持差分渲染和交互组件 |
 | `coding-agent` | 完整的编码助手 CLI，内置文件操作、搜索等工具 |
 | `telemetry` | 供应商中立的遥测抽象 |
-| `server/client` | WebSocket 服务器和客户端实现 |
+| `mcp` 【新增】 | 独立的 Model Context Protocol 客户端（含 OAuth、结果裁剪） |
+| `codemode` 【新增】 | 沙箱化 JavaScript 执行：脚本唯一的能力是调用注入的工具 |
+| `durable` 【新增】 | 持久化会话 / 任务 / 文档运行时（harness、compaction、signals） |
+| `env` 【新增】 | 远程执行环境：经 SSH 部署的小型 daemon + ExecutionEnv 客户端 |
+| `chord` 【新增】 | 跨进程对象运行时：contracts、documents、store、插件热重载、HTTP/worker/web/终端客户端 |
+| `evals` 【新增】 | 评测框架（docker、harness、plan、report） |
+| `apps/p2`、`apps/p3` 【新增】 | 基于 Chord 的自托管 Pi UI（p2，实验性）与个人 Pi 服务器（p3，p2 的继任者） |
 
 ## 学习路径
 
 推荐按以下顺序阅读，从底层协议到上层应用逐步深入。
 
-### 第一层：基础协议与工具 (1-2天)
+### 第一层：基础设施 (1-2天)
 
-#### 1. packages/protocol
+#### 1. packages/schema 【新增】
 
-理解进程间通信的基础。
+> 旧的 `packages/protocol`（CBOR + 分帧）已删除；进程间通信职责移交给了 `chord` 的 link 层（见第五层）。基础设施层现在值得先读的是 `schema`。
 
-- **[`src/schemas.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/protocol/src/schemas.ts)** - 使用 TypeBox 定义的消息模式
-- **[`src/codec.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/protocol/src/codec.ts)** - CBOR 编解码实现
-- **[`src/framing.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/protocol/src/framing.ts)** - 消息分帧协议（处理大消息）
+不用 eval 的 JSON Schema 校验器，工具参数、配置、MCP 输入输出的校验都靠它。
+
+- **[`src/types.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/schema/src/types.ts)** - Schema 类型定义
+- **[`src/compiler.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/schema/src/compiler.ts)** - 把 schema 编译成普通闭包（无 eval，适配 CSP 严格环境）
+- **[`src/coerce.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/schema/src/coerce.ts)** - 类型纠偏（模型给的字符串数字转回 number 等）
+- **[`src/explain.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/schema/src/explain.ts)** - 可读的校验错误信息
 
 **关键点**：
-- TypeBox 如何定义类型安全的序列化模式
-- CBOR 相比 JSON 的优势（二进制、紧凑）
-- 帧协议如何处理流式传输
+- 为什么不用 ajv：ajv 依赖 `new Function`（eval），在沙箱/Worker 等 CSP 环境会被禁
+- 编译成闭包与解释执行的性能权衡
  
  
 #### 2. packages/telemetry
@@ -97,8 +112,9 @@ server (WebSocket 服务器) + client (客户端库)
    - 对比 OpenAI 实现，理解差异
    - Tool use 的不同处理方式
 
-5. **[`src/api/openai-responses.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/ai/src/api/openai-responses.ts)** - 流式 API
-   - 如何将不同提供商的流式响应统一
+5. **[`src/api/`](file:///Users/mac/Agent/niannian/pi-learning/packages/ai/src/api)** - 真正的协议实现层
+   - `anthropic-messages.ts`、`openai-completions.ts`、`openai-responses.ts` 等 10+ 种协议方言
+   - `lazy.ts` - 按需加载协议实现（provider 只是配置，api 才是协议；详见 agent-and-ai.md）
 
 6. **[`src/oauth.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/ai/src/oauth.ts)** - OAuth 认证流程
    - 设备码流程
@@ -133,13 +149,9 @@ Agent 运行时是整个框架的心脏。
    - 消息历史管理
    - 工具注册和调用
 
-4. **[`src/harness/`](file:///Users/mac/Agent/niannian/pi-learning/packages/agent/src/harness)** - 消息处理器
-   - 不同类型消息的处理
-   - Tool result 的格式化
+4. **[`src/proxy.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/agent/src/proxy.ts)** / **[`src/stream-fn.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/agent/src/stream-fn.ts)** - 流式调用的代理与封装
 
-5. **[`src/search/`](file:///Users/mac/Agent/niannian/pi-learning/packages/agent/src/search)** - 内置搜索工具
-   - 文件搜索实现
-   - 内容搜索实现
+> 注：旧版的 `src/harness/`、`src/search/` 已不在此包；harness 相关逻辑移至 `packages/durable/src/harness/`，搜索工具在 `packages/coding-agent/src/core/tools/`（grep/find/ls）。
 
 **关键点**：
 - Agent 循环如何协调 LLM 和工具调用
@@ -242,19 +254,60 @@ Agent 运行时是整个框架的心脏。
   - [`subagent/`](file:///Users/mac/Agent/niannian/pi-learning/packages/coding-agent/examples/extensions/subagent) - 子 agent
   - [`with-deps/`](file:///Users/mac/Agent/niannian/pi-learning/packages/coding-agent/examples/extensions/with-deps) - 带依赖的扩展
 
-### 第五层：服务端与客户端 (1-2天)
+### 第五层：持久化运行时与分布式架构 (3-5天) 【新增】
 
-#### 8. packages/server
+> 旧的 `packages/server` / `packages/client`（WebSocket 架构）已删除，由下面这套新体系取代。
 
-WebSocket 服务器实现。
+#### 8. packages/mcp 【新增】
 
-- **[`src/server.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/server/src/server.ts)** - 服务器主逻辑
-- **[`src/sessions.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/server/src/sessions.ts)** - 会话管理
-- **[`src/transports/`](file:///Users/mac/Agent/niannian/pi-learning/packages/server/src/transports)** - 传输层实现
+独立的 MCP（Model Context Protocol）客户端，让 pi 接入外部工具服务器。
 
-#### 9. packages/client
+- **[`src/client.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/mcp/src/client.ts)** - MCP 客户端主逻辑
+- **[`src/oauth/`](file:///Users/mac/Agent/niannian/pi-learning/packages/mcp/src/oauth)** - MCP 服务器的 OAuth 授权
+- **[`src/output-limit.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/mcp/src/output-limit.ts)** - 工具结果体积裁剪
+- 对应文档：[`packages/coding-agent/docs/mcp.md`](file:///Users/mac/Agent/niannian/pi-learning/packages/coding-agent/docs/mcp.md)
 
-客户端库，可嵌入其他应用。
+#### 9. packages/codemode 【新增】
+
+沙箱化 JavaScript 执行：模型写脚本编排工具调用，脚本唯一的能力是调用注入的工具（无文件系统、无网络）。
+
+- **[`src/runtime/`](file:///Users/mac/Agent/niannian/pi-learning/packages/codemode/src/runtime)** - 沙箱运行时
+- **[`src/declarations.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/codemode/src/declarations.ts)** - 为注入的工具生成 TS 类型声明
+- 对应文档：[`packages/coding-agent/docs/codemode.md`](file:///Users/mac/Agent/niannian/pi-learning/packages/coding-agent/docs/codemode.md)
+
+#### 10. packages/durable 【新增】
+
+持久化会话 / 任务 / 文档运行时，是新架构里"会话"的家。
+
+- **[`src/harness/`](file:///Users/mac/Agent/niannian/pi-learning/packages/durable/src/harness)** - agent harness（agent.ts、compaction.ts、context.ts、inbox.ts）
+- **[`src/session/`](file:///Users/mac/Agent/niannian/pi-learning/packages/durable/src/session)** - 会话持久化
+- **[`src/signals.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/durable/src/signals.ts)** - 信号机制
+
+#### 11. packages/env 【新增】
+
+远程执行环境：经 SSH 把一个小 daemon 部署到远端机器，本地通过 `ExecutionEnv` 客户端执行命令、读写文件、开终端。
+
+- **[`src/remote-env.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/env/src/remote-env.ts)** / **[`src/ssh.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/env/src/ssh.ts)**
+
+#### 12. packages/chord 【新增】
+
+跨进程对象运行时：contracts、documents、store、links、插件热重载，带 HTTP、worker、web 和终端客户端。替代了旧的 protocol + server + client 三个包的职责。
+
+- **[`src/link/`](file:///Users/mac/Agent/niannian/pi-learning/packages/chord/src/link)** - 进程间通信链路（有自己的 README）
+- **[`src/contracts/`](file:///Users/mac/Agent/niannian/pi-learning/packages/chord/src/contracts)** - 类型化契约
+- **[`src/documents/`](file:///Users/mac/Agent/niannian/pi-learning/packages/chord/src/documents)** - 文档模型
+
+#### 13. apps/p2 与 apps/p3 【新增】
+
+- **[`apps/p2/`](file:///Users/mac/Agent/niannian/pi-learning/apps/p2)** - 基于 Chord 插件的自托管 Pi Durable UI（实验性，将被替换）
+- **[`apps/p3/`](file:///Users/mac/Agent/niannian/pi-learning/apps/p3)** - "每人一个 Pi"：本机服务器 + 每会话一个 worker，p2 的继任者（Chord v2）
+- 两者的 README 是理解整套新架构如何组装的最佳入口
+
+#### 14. packages/evals 【新增】
+
+评测框架：在 docker 里跑 agent 任务并出报告。
+
+- **[`src/harness.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/evals/src/harness.ts)** / **[`src/plan.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/evals/src/plan.ts)** / **[`src/report.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/evals/src/report.ts)**
 
 ## 关键文件速查
 
@@ -271,9 +324,11 @@ WebSocket 服务器实现。
 
 | 文件 | 描述 |
 |------|------|
-| [`packages/protocol/src/schemas.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/protocol/src/schemas.ts) | 消息协议类型 |
+| [`packages/schema/src/types.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/schema/src/types.ts) | JSON Schema 类型 【新增】 |
 | [`packages/ai/src/types.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/ai/src/types.ts) | AI API 类型 |
 | [`packages/agent/src/types.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/agent/src/types.ts) | Agent 类型系统 ⭐ |
+| [`packages/mcp/src/index.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/mcp/src/index.ts) | MCP 客户端入口 【新增】 |
+| [`packages/chord/src/index.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/chord/src/index.ts) | Chord 运行时入口 【新增】 |
 
 ### 扩展机制
 
@@ -393,8 +448,9 @@ interface Tool {
 持久化 agent 的对话历史和状态。
 
 **关键实现**：
-- [`packages/server/src/sessions.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/server/src/sessions.ts)
-- [`packages/session-backends/sqlite-node/`](file:///Users/mac/Agent/niannian/pi-learning/packages/session-backends/sqlite-node)
+- [`packages/coding-agent/src/core/session-manager.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/coding-agent/src/core/session-manager.ts) - CLI 的会话管理
+- [`packages/durable/src/session/`](file:///Users/mac/Agent/niannian/pi-learning/packages/durable/src/session) - 持久化运行时的会话 【新增】
+- 格式文档：[`packages/coding-agent/docs/session-format.md`](file:///Users/mac/Agent/niannian/pi-learning/packages/coding-agent/docs/session-format.md)
 
 ## 学习建议
 
@@ -461,9 +517,9 @@ cat packages/coding-agent/docs/tui.md
 
 ## 常见问题
 
-### Q: 为什么使用 CBOR 而不是 JSON？
+### Q: 旧指南里的 CBOR 协议（packages/protocol）去哪了？
 
-**A**: CBOR 是二进制格式，比 JSON 更紧凑，解析更快，且原生支持二进制数据（如图片）。
+**A**: 该包已随旧的 server/client 架构一起删除。进程间通信现在由 `packages/chord` 的 link 层负责（`packages/chord/src/link/`，自带 README）。`learning-guide/protocol.md` 的笔记仅作历史参考。
 
 ### Q: Agent 如何管理上下文窗口？
 

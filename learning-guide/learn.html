@@ -197,11 +197,15 @@ footer{border-top:1px solid var(--line);padding:24px 0;color:var(--fg3);font-siz
 	<div class="bignum">π</div>
 	<h1>把 pi 从「会用」读到「能改」</h1>
 	<p>这个站把两样东西缝在一起：<strong>16 章源码精读教程</strong>（每章有图解、真实源码对照、可运行的拆解实验）和仓库里的 <strong>learning-guide 学习路径</strong>（包分层、阅读顺序、关键文件、调试手段）。前者告诉你「这段代码做了什么」，后者告诉你「按什么顺序看、看到什么程度算懂」。</p>
+	<div class="callout warn" style="position:relative">
+		<div class="t">2026-11 仓库结构大改</div>
+		<p>同步上游后：<code>protocol</code> / <code>server</code> / <code>client</code> / <code>session-backends</code> 已删除；【新增】核心板块 <code>schema</code>、<code>mcp</code>、<code>codemode</code>、<code>durable</code>、<code>env</code>、<code>chord</code>、<code>evals</code>，以及 <code>apps/p2</code>、<code>apps/p3</code>。详见下方 L1 与 L5；教程章节里涉及 protocol/server 的内容仅作历史参考。</p>
+	</div>
 	<div class="stats">
 		<div class="stat"><b>5</b><span>层学习阶段</span></div>
 		<div class="stat"><b>16</b><span>章精读教程</span></div>
 		<div class="stat"><b>66</b><span>个拆解实验</span></div>
-		<div class="stat"><b>10</b><span>个 workspace 包</span></div>
+		<div class="stat"><b>12+3</b><span>个包 + 个 apps</span></div>
 		<div class="stat"><b>~145K</b><span>行可读源码</span></div>
 	</div>
 	<div class="btnrow">
@@ -248,9 +252,9 @@ footer{border-top:1px solid var(--line);padding:24px 0;color:var(--fg3);font-siz
 		<h3 style="margin-top:0">加分（⭐⭐）</h3>
 		<ul class="check" data-key="plus">
 			<li><input type="checkbox"><span>终端与 ANSI 转义序列（光标、颜色、光标定位）</span></li>
-			<li><input type="checkbox"><span>WebSocket 与二进制帧、分帧协议</span></li>
-			<li><input type="checkbox"><span>TypeBox / JSON Schema 的 schema→类型推导</span></li>
-			<li><input type="checkbox"><span>CBOR 是什么、为什么不用 JSON</span></li>
+			<li><input type="checkbox"><span>WebSocket 与二进制帧、进程间通信（chord link 层）</span></li>
+			<li><input type="checkbox"><span>JSON Schema 的 schema→类型推导与校验器编译（packages/schema）</span></li>
+			<li><input type="checkbox"><span>MCP（Model Context Protocol）是什么、解决什么问题</span></li>
 			<li><input type="checkbox"><span>Monorepo：workspace 协议、包之间单向依赖</span></li>
 			<li><input type="checkbox"><span>状态机与事件驱动设计</span></li>
 			<li><input type="checkbox"><span>插件 / 扩展架构（loader + 生命周期钩子）</span></li>
@@ -269,19 +273,19 @@ footer{border-top:1px solid var(--line);padding:24px 0;color:var(--fg3);font-siz
 <p>自上而下是依赖方向：上层 import 下层，反之不会发生。所以也可以反过来读——从最底层往上，读完一层就能理解下一层的输入是什么。</p>
 
 <div class="layer" data-open="1">
-	<header><span class="n">L1</span><h4>基础协议与工具 · protocol / telemetry</h4><span class="days">1–2 天</span><span class="caret">▸</span></header>
+	<header><span class="n">L1</span><h4>基础设施 · schema / telemetry【schema 新增】</h4><span class="days">1–2 天</span><span class="caret">▸</span></header>
 	<div class="body">
-		<p>这一层只回答两个问题：进程之间怎么说话（protocol），运行时怎么上报（telemetry）。代码量小，但定义了全仓库共用的消息形状。</p>
+		<p>这一层回答两个问题：数据怎么校验（schema），运行时怎么上报（telemetry）。旧的 <code>packages/protocol</code>（CBOR + 分帧）已删除，进程间通信移交给 L5 的 <code>chord</code> link 层。</p>
 		<table class="tbl">
 			<tr><th>文件</th><th>看什么</th></tr>
-			<tr><td>packages/protocol/src/schemas.ts</td><td>TypeBox 定义的消息模式；schema 即类型</td></tr>
-			<tr><td>packages/protocol/src/codec.ts</td><td>CBOR 编解码，为什么比 JSON 更适合传二进制</td></tr>
-			<tr><td>packages/protocol/src/framing.ts</td><td>分帧：大消息怎么切、流式怎么续</td></tr>
+			<tr><td>packages/schema/src/types.ts</td><td>【新增】JSON Schema 类型定义（draft 2020-12 / 7）</td></tr>
+			<tr><td>packages/schema/src/compiler.ts</td><td>【新增】schema 编译成普通闭包，不用 eval（适配沙箱/CSP）</td></tr>
+			<tr><td>packages/schema/src/coerce.ts</td><td>【新增】类型纠偏：模型给的字符串数字转回 number</td></tr>
 			<tr><td>packages/telemetry/src/index.ts</td><td>供应商中立接口：span 与 sensitive 标记</td></tr>
 			<tr><td>packages/telemetry/src/noop.ts · memory.ts</td><td>Null Object 模式；用内存实现做测试替身</td></tr>
 		</table>
 		<p><strong>关键点</strong>：接口与实现分离（不绑死具体遥测库）、Null Object 让「不开启遥测」不需要到处判空、sensitive 标记决定哪些数据不出机器。</p>
-		<p>延伸：<code>learning-guide/protocol.md</code> 有逐节讲解。</p>
+		<p>延伸：<code>learning-guide/protocol.md</code>（protocol 部分已标注为历史参考，telemetry 部分仍有效）。</p>
 	</div>
 </div>
 
@@ -295,7 +299,7 @@ footer{border-top:1px solid var(--line);padding:24px 0;color:var(--fg3);font-siz
 			<li><code>src/model-catalog.ts</code> — 模型注册表与元数据</li>
 			<li><code>src/providers/openai.ts</code> — 先读一个完整 Provider 实现</li>
 			<li><code>src/providers/anthropic.ts</code> — 对比：tool use 与流式差异</li>
-			<li><code>src/api/openai-responses.ts</code> — 流式响应如何被统一</li>
+			<li><code>src/api/</code> — 真正的协议实现层（anthropic-messages / openai-completions / openai-responses 等 10+ 种方言，配 <code>lazy.ts</code> 按需加载）</li>
 			<li><code>src/oauth.ts</code> — 设备码流程与 token 管理</li>
 		</ol>
 		<div class="callout warn">
@@ -307,8 +311,7 @@ footer{border-top:1px solid var(--line);padding:24px 0;color:var(--fg3);font-siz
 			<li><code>src/types.ts</code> — Tool / ToolResult / AgentState / Harness</li>
 			<li><code>src/agent-loop.ts</code> — <strong>核心循环</strong>，值得花一整天</li>
 			<li><code>src/agent.ts</code> — 状态持有、消息历史、工具注册</li>
-			<li><code>src/harness/</code> — 各类消息处理器与 tool result 格式化</li>
-			<li><code>src/search/</code> — 内置搜索工具</li>
+			<li><code>src/proxy.ts</code> · <code>src/stream-fn.ts</code> — 流式调用的代理与封装（旧版的 harness/ 移至 durable，search/ 移至 coding-agent tools）</li>
 		</ol>
 		<div class="flow"><span class="s">用户输入</span><span class="a">→</span><span class="s">调 LLM</span><span class="a">→</span><span class="s">解析 tool call</span><span class="a">→</span><span class="s">执行工具</span><span class="a">→</span><span class="s">结果回填</span><span class="a">→</span><span class="s">再调 LLM</span><span class="a">↺</span></div>
 		<p>深读 <code>agent-loop.ts</code> 的方法：先通读标记疑问 → 画出状态转换 → 跟踪一次完整 tool call 请求 → 改代码看行为变化。</p>
@@ -361,17 +364,23 @@ footer{border-top:1px solid var(--line);padding:24px 0;color:var(--fg3);font-siz
 	</div>
 </div>
 
-<div class="layer" data-open="0">
-	<header><span class="n">L5</span><h4>服务端与客户端 · server / client</h4><span class="days">1–2 天</span><span class="caret">▸</span></header>
+<div class="layer" data-open="1">
+	<header><span class="n">L5</span><h4>持久化运行时与分布式架构 · mcp / codemode / durable / env / chord / evals【全部新增】</h4><span class="days">3–5 天</span><span class="caret">▸</span></header>
 	<div class="body">
-		<p>把 agent 跑在进程外，用 WebSocket 暴露给别的应用。这里能看到 L1 的 protocol 为什么那样设计。</p>
+		<p>旧的 <code>server</code> / <code>client</code>（WebSocket 架构）已删除，由这套新体系取代：会话持久化在 <code>durable</code>，进程间通信和宿主运行时在 <code>chord</code>，外部工具接入在 <code>mcp</code>。</p>
 		<table class="tbl">
-			<tr><th>文件</th><th>看点</th></tr>
-			<tr><td>packages/server/src/server.ts</td><td>服务器主逻辑、连接管理</td></tr>
-			<tr><td>packages/server/src/sessions.ts</td><td>会话生命周期</td></tr>
-			<tr><td>packages/server/src/transports/</td><td>传输层抽象</td></tr>
-			<tr><td>packages/client/</td><td>可嵌入的客户端库</td></tr>
+			<tr><th>模块</th><th>看点</th></tr>
+			<tr><td>packages/mcp/</td><td>【新增】独立 MCP 客户端：client.ts、oauth/、结果体积裁剪</td></tr>
+			<tr><td>packages/codemode/</td><td>【新增】沙箱 JS 执行：脚本唯一能力是调用注入的工具</td></tr>
+			<tr><td>packages/durable/src/harness/</td><td>【新增】持久化 agent harness：agent · compaction · context · inbox</td></tr>
+			<tr><td>packages/durable/src/session/</td><td>【新增】会话 / 任务 / 文档的持久化</td></tr>
+			<tr><td>packages/env/</td><td>【新增】远程执行环境：SSH 部署的 daemon + ExecutionEnv 客户端</td></tr>
+			<tr><td>packages/chord/src/link/</td><td>【新增】进程间通信链路（接替旧 protocol，自带 README）</td></tr>
+			<tr><td>packages/chord/src/contracts/ · documents/</td><td>【新增】类型化契约与文档模型、插件热重载</td></tr>
+			<tr><td>apps/p2/ · apps/p3/</td><td>【新增】基于 Chord 的自托管 UI（p2，实验性）与个人 Pi 服务器（p3，继任者）；两个 README 是新架构最佳入口</td></tr>
+			<tr><td>packages/evals/</td><td>【新增】评测框架：docker · harness · plan · report</td></tr>
 		</table>
+		<p>配套章节：<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/14-codemode-mcp/index.html">14（codemode / MCP）</a>；durable / chord / p2 / p3 暂无对应教程章节，从各自 README 入手。</p>
 	</div>
 </div>
 </section>
@@ -382,12 +391,12 @@ footer{border-top:1px solid var(--line);padding:24px 0;color:var(--fg3);font-siz
 <div class="scroll">
 <table class="tbl">
 	<tr><th>周</th><th>内容</th><th>产出（读懂了的标准）</th><th>章节</th></tr>
-	<tr><td>W1</td><td>TS/异步/JSON Schema 补课 + protocol、telemetry</td><td>能说清 CBOR 分帧解决什么问题；能不看代码画出 span 结构</td><td class="num">00 03</td></tr>
+	<tr><td>W1</td><td>TS/异步/JSON Schema 补课 + schema、telemetry</td><td>能说清 schema 为什么不用 eval；能不看代码画出 span 结构</td><td class="num">00 03</td></tr>
 	<tr><td>W2</td><td>ai：types → providers → api 适配</td><td>能解释「同一条 Message 在 OpenAI 与 Anthropic 下如何变成不同请求体」</td><td class="num">01 02</td></tr>
 	<tr><td>W3</td><td>agent：agent-loop 深读 + agent 状态</td><td>能画出一次 tool call 的完整状态转换，并指出错误重试在哪一步</td><td class="num">04 05</td></tr>
 	<tr><td>W4</td><td>coding-agent：tools、system-prompt、sessions</td><td>能自己加一个工具并让模型调用成功</td><td class="num">06 07 08</td></tr>
 	<tr><td>W5</td><td>compaction、AgentSession、extensions</td><td>能解释上下文满了之后消息怎么被折叠</td><td class="num">09 10 11</td></tr>
-	<tr><td>W6</td><td>tui、modes、codemode/mcp</td><td>能改一个键位 / 加一个组件并看到终端反应</td><td class="num">12 13 14</td></tr>
+	<tr><td>W6</td><td>tui、modes、codemode/mcp + 新架构总览（durable/chord/p3）</td><td>能改一个键位 / 加一个组件并看到终端反应；能说清一条消息在 p3 里的路径</td><td class="num">12 13 14</td></tr>
 	<tr><td>W7</td><td>毕业项目：从零组装 mini-pi</td><td>不抄源码写出一个能读文件、跑命令的最小 agent</td><td class="num">15</td></tr>
 </table>
 </div>
@@ -467,9 +476,8 @@ open source.html</code></pre>
 	<tr><td>packages/ai/src/model-catalog.ts</td><td>模型注册表与元数据</td><td class="num">02</td></tr>
 	<tr><td>packages/ai/src/api/*.ts</td><td>真正的协议适配器（streaming / responses / messages）</td><td class="num">02</td></tr>
 	<tr><td>packages/ai/src/oauth.ts</td><td>OAuth 设备码流程与 token 管理</td><td class="num">02</td></tr>
-	<tr><td>packages/protocol/src/schemas.ts</td><td>TypeBox 消息协议类型</td><td class="num">—</td></tr>
-	<tr><td>packages/protocol/src/codec.ts</td><td>CBOR 编解码</td><td class="num">—</td></tr>
-	<tr><td>packages/protocol/src/framing.ts</td><td>消息分帧（大消息 / 流式）</td><td class="num">—</td></tr>
+	<tr><td>packages/schema/src/types.ts</td><td>【新增】JSON Schema 类型定义</td><td class="num">03</td></tr>
+	<tr><td>packages/schema/src/compiler.ts</td><td>【新增】无 eval 的校验器编译</td><td class="num">03</td></tr>
 	<tr><td>packages/telemetry/src/index.ts</td><td>供应商中立遥测接口</td><td class="num">—</td></tr>
 	<tr><td>packages/tui/src/tui.ts</td><td>TUI 渲染循环与差分渲染</td><td class="num">12</td></tr>
 	<tr><td>packages/tui/src/terminal.ts</td><td>ANSI 转义与光标控制</td><td class="num">12</td></tr>
@@ -480,9 +488,12 @@ open source.html</code></pre>
 	<tr><td>packages/coding-agent/src/core/system-prompt.ts</td><td>系统 prompt 组装与上下文注入</td><td class="num">07</td></tr>
 	<tr><td>packages/coding-agent/src/extensions/</td><td>扩展发现、加载与生命周期</td><td class="num">11</td></tr>
 	<tr><td>packages/coding-agent/src/modes/</td><td>interactive / print / json / rpc</td><td class="num">13</td></tr>
-	<tr><td>packages/server/src/server.ts</td><td>WebSocket 服务器主逻辑</td><td class="num">—</td></tr>
-	<tr><td>packages/server/src/sessions.ts</td><td>服务端会话管理</td><td class="num">—</td></tr>
-	<tr><td>packages/client/</td><td>可嵌入客户端库</td><td class="num">—</td></tr>
+	<tr><td>packages/mcp/src/client.ts</td><td>【新增】MCP 客户端主逻辑</td><td class="num">14</td></tr>
+	<tr><td>packages/codemode/src/runtime/</td><td>【新增】沙箱 JS 执行运行时</td><td class="num">14</td></tr>
+	<tr><td>packages/durable/src/harness/</td><td>【新增】持久化 agent harness（compaction / context / inbox）</td><td class="num">—</td></tr>
+	<tr><td>packages/chord/src/link/</td><td>【新增】进程间通信链路（接替旧 protocol）</td><td class="num">—</td></tr>
+	<tr><td>packages/env/src/remote-env.ts</td><td>【新增】SSH 远程执行环境</td><td class="num">—</td></tr>
+	<tr><td>apps/p2/ · apps/p3/</td><td>【新增】自托管 UI 与个人 Pi 服务器（读 README）</td><td class="num">—</td></tr>
 	<tr><td>packages/coding-agent/docs/extensions.md</td><td>扩展开发文档</td><td class="num">11</td></tr>
 	<tr><td>packages/coding-agent/examples/extensions/</td><td>扩展示例：自定义 provider / 沙箱 / subagent</td><td class="num">11</td></tr>
 </table>
@@ -549,8 +560,8 @@ node "$(git rev-parse --show-toplevel)/node_modules/vitest/dist/cli.js" --run te
 <section id="faq">
 <h2>常见问题</h2>
 
-<details><summary>为什么用 CBOR 而不是 JSON？</summary>
-<p>CBOR 是二进制格式：更紧凑、解析更快，且原生能装二进制数据（图片、附件）不需要 base64 膨胀。对「高频、含二进制、跨进程」的消息通道，这三条都成立。</p></details>
+<details><summary>旧指南里的 CBOR 协议（packages/protocol）去哪了？</summary>
+<p>已随旧的 server/client 架构一起删除。进程间通信现在由 <code>packages/chord</code> 的 link 层负责（<code>packages/chord/src/link/</code>，自带 README）；会话持久化移到了 <code>packages/durable</code>。「消息边界 + 格式校验 + 编解码」的设计思路在新 link 层里仍然适用。</p></details>
 
 <details><summary>Agent 如何管理上下文窗口？</summary>
 <p>两层：先由 compaction 在接近上限时把旧消息折叠成摘要（第 09 章），再由 <code>convertToLlm</code> 决定哪些条目最终进入请求。摘要节点本身留在会话树里，可以被后续请求引用。</p></details>
