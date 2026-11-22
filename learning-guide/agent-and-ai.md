@@ -73,6 +73,226 @@ AI 返回的 `ToolCall` 只是一个数据对象，不是真正的执行。外�
 
 ---
 
+## 深挖：Provider / API 分层与两家协议对比
+
+### Q1 指南说要读 `providers/openai.ts` 和 `anthropic.ts` 对比实现，但它们只有 15 行和 59 行，找错文件了？
+
+没找错，是指南的表述把两层当成一层了。`providers/openai.ts` 全文就是一次配置调用：
+
+```ts
+export function openaiProvider(): Provider<"openai-responses"> {
+    return createProvider({
+        id: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com/v1",
+        auth: { apiKey: envApiKeyAuth("OpenAI API key", ["OPENAI_API_KEY"]) },
+        models: Object.values(OPENAI_MODELS),
+        api: openAIResponsesApi(),   // ← 真正的协议实现在这里
+    });
+}
+```
+
+provider 工厂只回答四个问题：**我是谁**（id / name）、**连哪儿**（baseUrl）、**怎么认证**（auth）、**我有哪些模型**（models）。协议怎么说话是 `api` 字段指向的实现负责，代码在 [`src/api/`](file:///Users/mac/Agent/niannian/pi-learning/packages/ai/src/api) 下——`anthropic-messages.ts` 1401 行，`openai-completions.ts` 1588 行。
+
+对比 `anthropic.ts` 剩下的 59 行是什么？全是 auth。Anthropic 有三种凭据来源要按优先级试：stored credential → `ANTHROPIC_AUTH_TOKEN`（走 Bearer header）→ `ANTHROPIC_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`，外加一个 `lazyOAuth` 处理 Claude Pro/Max 订阅登录。**auth 的复杂度才是 provider 层真正的差异所在**，协议反而不属于这一层。
+
+### Q2 那 provider 和 api 是什么关系？为什么不合并成一层？
+
+多对一，而且是高度倾斜的多对一。[`types.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/ai/src/types.ts) 里 `KnownApi` 列了 10 种协议，`KnownProvider` 列了 40 个 provider，实际映射：
+
+| API 实现 | 用它的 provider | 数量 |
+|---|---|---|
+| `openai-completions` | deepseek, groq, cerebras, together, moonshotai, qwen×3, xiaomi×4, zai, nvidia, baseten, huggingface, openrouter, cloudflare-workers-ai, ant-ling | 21 |
+| `anthropic-messages` | anthropic, **fireworks**, **github-copilot**, **vercel-ai-gateway**, minimax×2, opencode×2, kimi-coding, cloudflare-ai-gateway | 10 |
+| 其余 8 种 | openai/xai（responses）、openai-codex、mistral、google×2、bedrock、radius（pi-messages） | 9 |
+
+加粗的几个是理解的关键：`fireworks`、`github-copilot`、`vercel-ai-gateway` 都不是 Anthropic 的服务，却走 Anthropic 协议。所以 **"OpenAI 兼容"和"Anthropic 兼容"是事实上的两大网络协议方言，不是公司边界**。合并的话，40 个 provider 要复制 40 份 1500 行的流式解析代码。
+
+这也修正了上面「新增模型只需要实现转换层」的说法，更准确的表述是：
+
+- 新增 **provider**（新服务商）→ 挑一个现成的 api 实现，只写配置
+- 新增 **api 实现** → 只有出现新的协议方言时才需要写
+
+顺带一个 TS 技巧：`export type Api = KnownApi | (string & {})`。`| (string & {})` 让类型保持"任意字符串"的同时，编辑器的自动补全仍然优先提示 `KnownApi` 里的 10 个字面量。纯 `Api = KnownApi | string` 会退化成 `string`，补全就没了。
+
+### Q3 为什么 api 实现都是 `.lazy.ts` 包一层？
+
+`providers/openai.ts` 导入的是 `openai-responses.lazy.ts`，[`api/lazy.ts`](file:///Users/mac/Agent/niannian/pi-learning/packages/ai/src/api/lazy.ts) 里的 `lazyApi()` 把动态 import 藏在第一次调用后面：
+
+```ts
+stream: (model, context, options) =>
+    lazyStream(model, async () => (await load()).stream(model, context, options)),
+```
+
+两个原因叠在一起：
+
+1. **启动体积**。10 个 api 实现加起来 11000+ 行，全加载就是纯浪费。你用 Anthropic 就完全不该加载 openai-codex 的 1650 行。
+2. **启动路径是同步的，不能 await**。所以 `lazyStream()` 同步返回一个空壳 stream，异步加载在后面跑，加载完成后再把事件转发进去。
+
+```ts
+setup()
+    .then((inner) => forwardStream(outer, inner))
+    .catch((error) => {
+        const message = createSetupErrorMessage(model, error);
+        outer.push({ type: "error", reason: "error", error: message });
+        outer.end(message);
+    });
+```
+
+注意加载失败**不抛异常**，而是构造成一条 `stopReason: "error"` 的 AssistantMessage 推进流里。这和 telemetry 的 noop 是同一个思路：**错误走数据通道，不走异常通道**，调用方只需要处理流事件这一条路径，不用在两个地方都写错误处理。
+
+### Q4 两家的流式协议结构差在哪？
+
+差异比"字段名不同"要深，是**消息边界的有无**。
+
+**Anthropic 是显式三段式**，每个内容块有 `index`，生命周期完整告知：
+
+```
+content_block_start  (type: text | thinking | tool_use)
+  content_block_delta (text_delta | thinking_delta | input_json_delta | signature_delta)
+content_block_stop
+```
+
+定位块靠 `blocks.findIndex(b => b.index === event.index)`。
+
+**OpenAI 没有块边界**，只有一条平坦的 `choices[0].delta` 流：
+
+- 文本块靠 `ensureTextBlock()` 懒创建——第一个非空 delta 到了才建块，之前一直是 `undefined`
+- thinking 更麻烦，兼容端点字段名不统一：`reasoning_content`（llama.cpp）/ `reasoning` / `reasoning_text` 三个都试，取第一个非空的（注释说 chutes.ai 会同时返回两个相同内容，不去重就会重复）
+- 所有块在流结束时统一 `for (const block of blocks) finishBlock(block)`
+
+一句话概括：**Anthropic 告诉你"这段结束了"，OpenAI 要你自己推断"开始了"和"全部结束了"。**
+
+Anthropic 侧还有个 OpenAI 不需要的完整性校验：
+
+```ts
+if (sawMessageStart && !sawMessageEnd) {
+    throw new Error("Anthropic stream ended before message_stop");
+}
+```
+
+SSE 是手写解析的（`iterateSseMessages`，处理 `\r` / `\n` / `\r\n` 三种换行和跨 chunk 断行），没有 SDK 兜底，所以断流必须自己检测。而且 `parseJsonWithRepair` 失败时抛的错会带上 `data=` 和 `raw=` 原始行——线上排查时能直接看到服务端发了什么。
+
+### Q5 tool call 的参数是流式 JSON 片段，半截的怎么变成对象？
+
+两家用同一个套路：**累加原始字符串到 scratch buffer，每个 delta 都试着解析一次**。
+
+```ts
+// Anthropic
+block.partialJson += event.delta.partial_json;
+block.arguments = parseStreamingJson(block.partialJson);
+
+// OpenAI
+block.partialArgs += toolCall.function.arguments;
+block.arguments = parseStreamingJson(block.partialArgs);
+```
+
+[`parseStreamingJson`](file:///Users/mac/Agent/niannian/pi-learning/packages/ai/src/utils/json-parse.ts) 是三级降级，**永不抛异常**：
+
+```ts
+parseJsonWithRepair(partialJson)        // 1. 直接解析（带修复）
+  ↓ 失败
+partialParse(partialJson)               // 2. 解析出多少算多少
+  ↓ 失败
+partialParse(repairJson(partialJson))   // 3. 先修复再部分解析
+  ↓ 失败
+{}                                      // 4. 兜底空对象
+```
+
+为什么每个 delta 都重解析，而不是等流结束解析一次？因为 UI 要边流边显示参数——`read` 工具的 `path` 先出来，用户就能看到它准备读哪个文件，`content` 后填。这是拿 CPU 换体感。
+
+流结束时的收尾很讲究：
+
+```ts
+block.arguments = parseStreamingJson(block.partialJson);
+delete block.partialJson;   // 注释：so replay only carries parsed arguments
+stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: output });
+```
+
+scratch buffer（`partialJson` / `partialArgs` / `streamIndex`）在结束前全部 `delete`。因为这个 block 会被塞进会话历史并回放给模型，留着中间态既浪费 token 又可能让模型困惑。
+
+### Q6 stopReason 怎么统一？`max_tokens` 那条和 agent-loop 有什么关系？
+
+Anthropic 的 [`mapStopReason`](file:///Users/mac/Agent/niannian/pi-learning/packages/ai/src/api/anthropic-messages.ts) 是显式映射表：
+
+| Anthropic | Pi 统一 | 含义 |
+|---|---|---|
+| `end_turn` | `stop` | 正常说完 |
+| `max_tokens` | `length` | **token 用尽，输出被截断** |
+| `tool_use` | `toolUse` | 要调工具 |
+| `refusal` / `sensitive` | `error` + errorMessage | 拒答 / 安全过滤 |
+| `pause_turn` | `stop` | 注释："Stop is good enough -> resubmit" |
+| `stop_sequence` | `stop` | 注释：从不传 stop sequences，理论上不会发生 |
+| 其他 | **throw** | 未知值直接抛 |
+
+`max_tokens → length` 这一条正是 agent-loop 里那句「token 超限时工具调用参数可能残缺，统一标记失败」的**上游来源**：截断发生在 tool call 的 JSON 参数中途，`parseStreamingJson` 只能解析出半个对象甚至 `{}`。与其让 agent 拿着残缺参数去执行工具，不如整批标记失败让模型重来。
+
+default 分支抛异常而不是兜底成 `stop`，是有意的：未知的 stop reason 意味着漏掉了新的终止语义，静默兜底会把错误传播到上层变成难查的 bug。
+
+### Q7 消息转换最大的差异是什么？
+
+是 **tool result 归属哪个角色**。
+
+Anthropic 协议里**根本没有 tool 角色**，`tool_result` 是 user 消息里的一个 content block：
+
+```ts
+// 收集所有连续的 toolResult，合并进同一条 user 消息
+let j = i;
+while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
+    toolResults.push(convertToolResult(transformedMessages[j]));
+    j++;
+}
+i = j - 1;
+params.push({ role: "user", content: [...toolResults, ...siblingContent] });
+```
+
+那个 while 循环不是优化，是硬约束——注释写着 "needed for z.ai Anthropic endpoint"，部分兼容端点拒绝连续的 user 消息。OpenAI 侧则有独立的 `role: "tool"` 消息，一条工具结果一条消息，不需要合并。
+
+其他几处差异：
+
+- **system prompt 不在 messages 数组里**，是 Anthropic 的顶层 `system` 参数
+- **thinking 块必须带 signature 回传**。签名是 Anthropic 用来验证思考内容未被篡改的，缺了就降级：
+
+```ts
+if (!hasThinkingSignature) {
+    blocks.push(allowEmptySignature
+        ? { type: "thinking", thinking: block.thinking, signature: "" }
+        : { type: "text",     text: block.thinking });   // 降级成普通文本
+}
+```
+
+注释说明了触发场景：**"e.g., from aborted stream"**——用户按 Ctrl-C 打断，之前那条 thinking 就没有 signature。降级成 text 是为了不丢内容，同时不违反 Anthropic 的签名校验。`allowEmptySignature` 是给那些接受空签名的兼容端点用的逃生舱。
+
+- **空文本块全被过滤**（`trim().length === 0` 就 `continue`），因为 Anthropic 拒绝空 content 的块
+
+### Q8 prompt cache 在协议层是怎么落地的？
+
+在 `convertMessages` 的最后，给**最后一条 user 消息的最后一个 block** 打标记：
+
+```ts
+if (cacheControl && params.length > 0) {
+    const lastMessage = params[params.length - 1];
+    if (lastMessage.role === "user") {
+        lastBlock.cache_control = cacheControl;
+    }
+}
+```
+
+能这么做的前提是 Anthropic 的 cache 走**前缀匹配**——标记在哪，缓存边界就到哪。所以每轮对话都把标记推到最新位置，前面所有历史自动命中缓存。
+
+注意只在 `lastMessage.role === "user"` 时加。最后一条是 assistant 的话（prefill 场景）就不加。
+
+这也解释了 `usage` 里为什么有四个字段：`input` / `output` / `cacheRead` / `cacheWrite`，外加一个 `cacheWrite1h` 对应 `ephemeral_1h_input_tokens`（1 小时缓存档位）。Anthropic 不返回 `total_tokens`，Pi 自己加：
+
+```ts
+output.usage.totalTokens = input + output + cacheRead + cacheWrite;
+calculateCost(model, output.usage);   // 按模型单价算钱
+```
+
+顺带一个细节：`message_start` 事件里就先把 input token 数记下来，注释写明 "This ensures we have input token counts even if the stream is aborted early"——流中途断了也要能算出这次请求花了多少钱。
+
+---
+
 ## packages/agent — Agent 核心
 
 Agent 运行时是整个框架的心脏，协调 AI 和工具调用。

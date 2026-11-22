@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi 源码学习站 · 学习路径 × 16 章教程</title>
+<style>
+:root{
+	--bg:#0f1117; --bg2:#151823; --bg3:#1b1f2d; --line:#262b3a;
+	--fg:#e6e9f0; --fg2:#a8b0c2; --fg3:#6f788c;
+	--acc:#7aa2ff; --acc2:#4f7dff; --green:#54d69a; --yellow:#f0c05a; --purple:#b98cff; --red:#ff7a85;
+	--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+	--radius:12px;
+}
+html[data-theme="light"]{
+	--bg:#fbfbfd; --bg2:#f2f3f8; --bg3:#e9ebf2; --line:#dcdfe9;
+	--fg:#171a22; --fg2:#4c5468; --fg3:#8a92a5;
+	--acc:#2f5ee0; --acc2:#1f47b8; --green:#12855c; --yellow:#9a6a00; --purple:#6d3fd1; --red:#c12d3a;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth; scroll-padding-top:80px}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--acc);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.88em;background:var(--bg3);padding:.12em .4em;border-radius:5px;border:1px solid var(--line)}
+h1,h2,h3,h4{line-height:1.3;margin:0 0 .5em}
+h2{font-size:24px;margin-top:0;padding-top:8px}
+h3{font-size:17px;margin-top:26px}
+p{margin:.5em 0 .9em;color:var(--fg2)}
+ul,ol{color:var(--fg2);padding-left:22px}
+li{margin:.25em 0}
+strong{color:var(--fg)}
+hr{border:0;border-top:1px solid var(--line);margin:36px 0}
+
+/* top bar */
+.topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:14px;padding:10px 20px;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .brand{font-weight:700;letter-spacing:.2px;display:flex;align-items:center;gap:8px}
+.topbar .brand .pi{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--acc2),var(--purple));color:#fff;font-family:var(--mono);font-size:16px}
+.topbar .ver{font-size:12px;color:var(--fg3);padding:2px 8px;border:1px solid var(--line);border-radius:99px}
+.topbar .spacer{flex:1}
+.topbar button{font:inherit;font-size:13px;color:var(--fg2);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:5px 11px;cursor:pointer}
+.topbar button:hover{color:var(--fg);border-color:var(--acc)}
+
+/* layout */
+.wrap{display:grid;grid-template-columns:250px minmax(0,1fr);max-width:1240px;margin:0 auto;gap:0}
+nav.toc{position:sticky;top:57px;align-self:start;height:calc(100vh - 57px);overflow:auto;padding:22px 12px 40px 20px;border-right:1px solid var(--line);font-size:13.5px}
+nav.toc .grp{color:var(--fg3);font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin:18px 0 6px}
+nav.toc a{display:block;color:var(--fg2);padding:3px 8px;border-radius:6px;border-left:2px solid transparent}
+nav.toc a:hover{background:var(--bg2);color:var(--fg);text-decoration:none}
+nav.toc a.on{color:var(--acc);border-left-color:var(--acc);background:color-mix(in srgb,var(--acc) 10%,transparent)}
+main{padding:34px 34px 120px;min-width:0}
+section{scroll-margin-top:76px;margin-bottom:54px}
+
+/* hero */
+.hero{position:relative;border:1px solid var(--line);border-radius:18px;padding:34px;background:
+	radial-gradient(900px 240px at 10% -30%,color-mix(in srgb,var(--acc2) 26%,transparent),transparent),
+	linear-gradient(180deg,var(--bg2),var(--bg));overflow:hidden}
+.hero .bignum{position:absolute;right:26px;top:-14px;font:700 130px/1 var(--mono);color:color-mix(in srgb,var(--acc) 14%,transparent)}
+.hero h1{font-size:32px;margin-bottom:10px}
+.hero p{max-width:70ch}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:20px;position:relative}
+.stat{border:1px solid var(--line);border-radius:12px;padding:11px 13px;background:color-mix(in srgb,var(--bg3) 60%,transparent)}
+.stat b{display:block;font-size:20px;font-family:var(--mono)}
+.stat span{font-size:12px;color:var(--fg3)}
+.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px;position:relative}
+.btn{display:inline-block;padding:9px 16px;border-radius:10px;border:1px solid var(--line);background:var(--bg2);color:var(--fg);font-size:14px}
+.btn:hover{text-decoration:none;border-color:var(--acc)}
+.btn.primary{background:linear-gradient(135deg,var(--acc2),var(--purple));border-color:transparent;color:#fff;font-weight:600}
+
+/* progress */
+.bar{height:7px;background:var(--bg3);border-radius:99px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--acc));width:0;transition:width .3s}
+
+/* cards */
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.card{border:1px solid var(--line);border-radius:var(--radius);padding:15px 17px;background:var(--bg2)}
+.card h4{margin:0 0 6px;font-size:15px}
+.card p{margin:0;font-size:13.5px}
+.card.b{border-top:3px solid var(--acc)}
+.card.g{border-top:3px solid var(--green)}
+.card.y{border-top:3px solid var(--yellow)}
+.card.p{border-top:3px solid var(--purple)}
+.card.r{border-top:3px solid var(--red)}
+
+.callout{border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:10px;padding:12px 16px;background:var(--bg2);margin:16px 0}
+.callout .t{font-weight:600;font-size:13.5px;margin-bottom:2px}
+.callout p{margin:0;font-size:13.5px}
+.callout.warn{border-left-color:var(--yellow)}
+.callout.tip{border-left-color:var(--green)}
+
+/* layer blocks */
+.layer{border:1px solid var(--line);border-radius:14px;background:var(--bg2);margin:14px 0;overflow:hidden}
+.layer > header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg3);border-bottom:1px solid var(--line);cursor:pointer;user-select:none}
+.layer > header .n{font-family:var(--mono);font-size:12px;color:var(--fg3)}
+.layer > header h4{margin:0;font-size:15px;flex:1}
+.layer > header .days{font-size:12px;color:var(--fg3)}
+.layer > header .caret{color:var(--fg3);transition:transform .2s}
+.layer[data-open="1"] > header .caret{transform:rotate(90deg)}
+.layer .body{display:none;padding:6px 18px 16px}
+.layer[data-open="1"] .body{display:block}
+
+/* tables */
+.tbl{width:100%;border-collapse:collapse;font-size:13.5px;margin:8px 0}
+.tbl th{text-align:left;color:var(--fg3);font-weight:600;font-size:12px;letter-spacing:.05em;text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--line)}
+.tbl td{padding:8px 10px;border-bottom:1px solid color-mix(in srgb,var(--line) 60%,transparent);color:var(--fg2);vertical-align:top}
+.tbl tr:hover td{background:var(--bg2)}
+.tbl td:first-child{color:var(--fg);font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+.tbl .num{font-family:var(--mono);color:var(--acc);white-space:nowrap}
+
+/* scroll table */
+.scroll{overflow:auto;border:1px solid var(--line);border-radius:12px}
+.scroll .tbl{margin:0}
+.scroll .tbl td:first-child{min-width:0}
+
+/* file list */
+.files{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 4px}
+.filter{flex:1;min-width:200px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--fg);padding:8px 12px;font:inherit;font-size:13.5px}
+.filter:focus{outline:none;border-color:var(--acc)}
+.filelist{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:12px}
+.filelist .row{display:flex;gap:12px;align-items:baseline;padding:9px 14px;border-bottom:1px solid color-mix(in srgb,var(--line) 60%,transparent);font-size:13px}
+.filelist .row:last-child{border-bottom:0}
+.filelist .row:hover{background:var(--bg2)}
+.filelist .p{font-family:var(--mono);font-size:12.5px;color:var(--acc);word-break:break-all}
+.filelist .d{color:var(--fg3);font-size:12.5px}
+.filelist .tag{flex-shrink:0;font-size:11px;color:var(--fg3);border:1px solid var(--line);border-radius:99px;padding:0 7px}
+.filelist .tag.hot{color:var(--yellow);border-color:color-mix(in srgb,var(--yellow) 45%,transparent)}
+
+/* checklist */
+.check{list-style:none;padding:0;margin:10px 0}
+.check li{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px dashed color-mix(in srgb,var(--line) 70%,transparent);font-size:14px}
+.check input{margin-top:5px;accent-color:var(--acc2);width:16px;height:16px;flex-shrink:0}
+.check li.done span{color:var(--fg3);text-decoration:line-through}
+
+/* faq */
+details{border:1px solid var(--line);border-radius:10px;background:var(--bg2);margin:8px 0;padding:0 16px}
+details summary{cursor:pointer;padding:12px 0;font-weight:600;font-size:14px;color:var(--fg);list-style:none}
+details summary::-webkit-details-marker{display:none}
+details summary::before{content:"▸";color:var(--acc);margin-right:9px;display:inline-block;transition:transform .15s}
+details[open] summary::before{transform:rotate(90deg)}
+details p{margin:0 0 12px;font-size:13.5px}
+
+pre{position:relative;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:12.8px;line-height:1.6;color:var(--fg)}
+pre code{background:none;border:0;padding:0;font-size:inherit}
+pre .copy{position:absolute;top:8px;right:8px;font:inherit;font-size:11px;background:var(--bg3);color:var(--fg3);border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer;opacity:0;transition:opacity .15s}
+pre:hover .copy{opacity:1}
+pre .copy:hover{color:var(--fg)}
+
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12.5px;font-family:var(--mono);margin:12px 0}
+.flow .s{border:1px solid var(--line);background:var(--bg2);border-radius:8px;padding:5px 10px;color:var(--fg2)}
+.flow .a{color:var(--fg3)}
+
+footer{border-top:1px solid var(--line);padding:24px 0;color:var(--fg3);font-size:12.5px}
+@media (max-width:900px){
+	.wrap{grid-template-columns:1fr}
+	nav.toc{display:none}
+	main{padding:22px 18px 90px}
+	.hero{padding:24px}
+	.hero .bignum{display:none}
+}
+</style>
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("pi-learn:theme")||"dark")}catch(e){}</script>
+</head>
+<body>
+
+<div class="topbar">
+	<div class="brand"><span class="pi">π</span> pi 源码学习站</div>
+	<span class="ver">教程 1.5.2 · 仓库 0.0.3</span>
+	<span class="spacer"></span>
+	<button id="themeBtn">切换主题</button>
+</div>
+
+<div class="wrap">
+<nav class="toc" id="toc">
+	<div class="grp">开始</div>
+	<a href="#hero">首页</a>
+	<a href="#howto">怎么用这个站</a>
+	<a href="#ready">前置自检</a>
+	<div class="grp">路径</div>
+	<a href="#path">五层学习路径</a>
+	<a href="#plan">时间与优先级</a>
+	<div class="grp">16 章</div>
+	<a href="#chapters">章节地图</a>
+	<a href="#labs">实验与源码浏览器</a>
+	<div class="grp">速查</div>
+	<a href="#files">关键文件速查</a>
+	<a href="#concepts">核心概念</a>
+	<a href="#debug">调试技巧</a>
+	<a href="#faq">常见问题</a>
+	<a href="#practice">动手实践</a>
+</nav>
+
+<main>
+
+<section class="hero" id="hero">
+	<div class="bignum">π</div>
+	<h1>把 pi 从「会用」读到「能改」</h1>
+	<p>这个站把两样东西缝在一起：<strong>16 章源码精读教程</strong>（每章有图解、真实源码对照、可运行的拆解实验）和仓库里的 <strong>learning-guide 学习路径</strong>（包分层、阅读顺序、关键文件、调试手段）。前者告诉你「这段代码做了什么」，后者告诉你「按什么顺序看、看到什么程度算懂」。</p>
+	<div class="stats">
+		<div class="stat"><b>5</b><span>层学习阶段</span></div>
+		<div class="stat"><b>16</b><span>章精读教程</span></div>
+		<div class="stat"><b>66</b><span>个拆解实验</span></div>
+		<div class="stat"><b>10</b><span>个 workspace 包</span></div>
+		<div class="stat"><b>~145K</b><span>行可读源码</span></div>
+	</div>
+	<div class="btnrow">
+		<a class="btn primary" href="#path">从学习路径开始 →</a>
+		<a class="btn" href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/index.html">打开教程首页</a>
+		<a class="btn" href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/00-overview/index.html">第 00 章 · 导论</a>
+		<a class="btn" href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/source.html">&lt;/&gt; 源码浏览器</a>
+	</div>
+	<div style="margin-top:24px;max-width:460px;position:relative">
+		<div style="font-size:12px;color:var(--fg3)">前置自检进度 <b id="progText">0 / 0</b></div>
+		<div class="bar"><i id="progBar"></i></div>
+	</div>
+</section>
+
+<section id="howto">
+<h2>怎么用这个站</h2>
+<p>两条线索交替使用：<strong>先建骨架，再填细节</strong>。骨架来自 learning-guide（包怎么分层、一次调用怎么穿过它们），细节来自 16 章教程（每一层的真实代码与实验）。</p>
+<div class="grid g2">
+	<div class="card b"><h4>① 用「五层路径」决定读什么</h4><p>每个阶段给出包、阅读顺序、关键点和对应章节。一个阶段结束再进下一个，不要按目录顺序乱翻。</p></div>
+	<div class="card g"><h4>② 每读一个模块，配合对应章节</h4><p>例如读 <code>packages/agent/src/agent-loop.ts</code> 时打开第 04 章，里面有逐行对照和可以离线跑的 faux 实验。</p></div>
+	<div class="card y"><h4>③ 实验优先于阅读</h4><p>教程实验默认走 faux 模型：不花钱、可复现，事件流与真实 provider 同构。跑一遍比读三遍收获大。</p></div>
+	<div class="card p"><h4>④ 用问题驱动验证</h4><p>每章末尾有自测题和课后作业。答不上来的，回到 <a href="#files">关键文件速查</a> 精读对应文件。</p></div>
+</div>
+<div class="callout tip">
+	<div class="t">你只有 30 分钟</div>
+	<p>读第 00 章（全景 + 三层消息 + 一次请求的旅程），再把第 04 章的 agent-loop 实验跑一遍。这两件事能覆盖理解 pi 的 60%。</p>
+</div>
+</section>
+
+<section id="ready">
+<h2>前置自检</h2>
+<p>来自 <code>learning-guide/prerequisites.md</code> 的优先级分级。下面 12 项是真正决定你读源码速度的，勾选状态会保存在本地。</p>
+<div class="grid g2">
+	<div>
+		<h3 style="margin-top:0">必须（⭐⭐⭐）</h3>
+		<ul class="check" data-key="must">
+			<li><input type="checkbox"><span>JS / TS：泛型、联合类型、类型收窄、<code>satisfies</code>、模块解析</span></li>
+			<li><input type="checkbox"><span>异步：<code>Promise</code>、<code>async/await</code>、AsyncIterator 与流式消费（<code>for await</code>）</span></li>
+			<li><input type="checkbox"><span>JSON Schema 与 tool calling：模型返回的 tool call 长什么样、怎么回填结果</span></li>
+			<li><input type="checkbox"><span>Node.js：<code>fs/promises</code>、<code>child_process</code>、<code>readline</code>、<code>AbortSignal</code></span></li>
+		</ul>
+	</div>
+	<div>
+		<h3 style="margin-top:0">加分（⭐⭐）</h3>
+		<ul class="check" data-key="plus">
+			<li><input type="checkbox"><span>终端与 ANSI 转义序列（光标、颜色、光标定位）</span></li>
+			<li><input type="checkbox"><span>WebSocket 与二进制帧、分帧协议</span></li>
+			<li><input type="checkbox"><span>TypeBox / JSON Schema 的 schema→类型推导</span></li>
+			<li><input type="checkbox"><span>CBOR 是什么、为什么不用 JSON</span></li>
+			<li><input type="checkbox"><span>Monorepo：workspace 协议、包之间单向依赖</span></li>
+			<li><input type="checkbox"><span>状态机与事件驱动设计</span></li>
+			<li><input type="checkbox"><span>插件 / 扩展架构（loader + 生命周期钩子）</span></li>
+			<li><input type="checkbox"><span>测试：node:test、vitest、faux provider 打桩</span></li>
+		</ul>
+	</div>
+</div>
+<div class="callout warn">
+	<div class="t">缺项不用等</div>
+	<p>「必须」四项里缺两项，先补 TS 泛型和流式异步，这两样在 <code>agent-loop.ts</code> 里随处可见。其余的在读的过程中补，比先学完再读效率高。</p>
+</div>
+</section>
+
+<section id="path">
+<h2>五层学习路径</h2>
+<p>自上而下是依赖方向：上层 import 下层，反之不会发生。所以也可以反过来读——从最底层往上，读完一层就能理解下一层的输入是什么。</p>
+
+<div class="layer" data-open="1">
+	<header><span class="n">L1</span><h4>基础协议与工具 · protocol / telemetry</h4><span class="days">1–2 天</span><span class="caret">▸</span></header>
+	<div class="body">
+		<p>这一层只回答两个问题：进程之间怎么说话（protocol），运行时怎么上报（telemetry）。代码量小，但定义了全仓库共用的消息形状。</p>
+		<table class="tbl">
+			<tr><th>文件</th><th>看什么</th></tr>
+			<tr><td>packages/protocol/src/schemas.ts</td><td>TypeBox 定义的消息模式；schema 即类型</td></tr>
+			<tr><td>packages/protocol/src/codec.ts</td><td>CBOR 编解码，为什么比 JSON 更适合传二进制</td></tr>
+			<tr><td>packages/protocol/src/framing.ts</td><td>分帧：大消息怎么切、流式怎么续</td></tr>
+			<tr><td>packages/telemetry/src/index.ts</td><td>供应商中立接口：span 与 sensitive 标记</td></tr>
+			<tr><td>packages/telemetry/src/noop.ts · memory.ts</td><td>Null Object 模式；用内存实现做测试替身</td></tr>
+		</table>
+		<p><strong>关键点</strong>：接口与实现分离（不绑死具体遥测库）、Null Object 让「不开启遥测」不需要到处判空、sensitive 标记决定哪些数据不出机器。</p>
+		<p>延伸：<code>learning-guide/protocol.md</code> 有逐节讲解。</p>
+	</div>
+</div>
+
+<div class="layer" data-open="1">
+	<header><span class="n">L2</span><h4>AI 抽象与 Agent 核心 · ai / agent（最核心）</h4><span class="days">3–4 天</span><span class="caret">▸</span></header>
+	<div class="body">
+		<p>整个框架的心脏。<code>ai</code> 把 20 多家厂商的 API 收敛成「一种消息格式 + 一种流式事件协议」；<code>agent</code> 则是「调用模型 → 执行工具 → 把结果喂回模型」的循环。</p>
+		<h3>packages/ai 阅读顺序</h3>
+		<ol>
+			<li><code>src/types.ts</code> — Provider / Model / Message / Content / ToolCall</li>
+			<li><code>src/model-catalog.ts</code> — 模型注册表与元数据</li>
+			<li><code>src/providers/openai.ts</code> — 先读一个完整 Provider 实现</li>
+			<li><code>src/providers/anthropic.ts</code> — 对比：tool use 与流式差异</li>
+			<li><code>src/api/openai-responses.ts</code> — 流式响应如何被统一</li>
+			<li><code>src/oauth.ts</code> — 设备码流程与 token 管理</li>
+		</ol>
+		<div class="callout warn">
+			<div class="t">注意：providers/ 只是注册入口</div>
+			<p><code>providers/openai.ts</code> 只有十几行——真正的协议适配在 <code>src/api/*.ts</code>。<code>learning-guide/agent-and-ai.md</code> 专门解释了这处容易找错文件的坑。</p>
+		</div>
+		<h3>packages/agent 阅读顺序（⭐⭐ 最核心）</h3>
+		<ol>
+			<li><code>src/types.ts</code> — Tool / ToolResult / AgentState / Harness</li>
+			<li><code>src/agent-loop.ts</code> — <strong>核心循环</strong>，值得花一整天</li>
+			<li><code>src/agent.ts</code> — 状态持有、消息历史、工具注册</li>
+			<li><code>src/harness/</code> — 各类消息处理器与 tool result 格式化</li>
+			<li><code>src/search/</code> — 内置搜索工具</li>
+		</ol>
+		<div class="flow"><span class="s">用户输入</span><span class="a">→</span><span class="s">调 LLM</span><span class="a">→</span><span class="s">解析 tool call</span><span class="a">→</span><span class="s">执行工具</span><span class="a">→</span><span class="s">结果回填</span><span class="a">→</span><span class="s">再调 LLM</span><span class="a">↺</span></div>
+		<p>深读 <code>agent-loop.ts</code> 的方法：先通读标记疑问 → 画出状态转换 → 跟踪一次完整 tool call 请求 → 改代码看行为变化。</p>
+		<p>配套章节：<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/01-pi-ai-messages/index.html">01</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/02-pi-ai-providers/index.html">02</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/03-tools-schema/index.html">03</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/04-agent-loop/index.html">04</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/05-agent-class/index.html">05</a></p>
+	</div>
+</div>
+
+<div class="layer" data-open="1">
+	<header><span class="n">L3</span><h4>终端 UI · tui</h4><span class="days">2–3 天</span><span class="caret">▸</span></header>
+	<div class="body">
+		<p>一个没有浏览器的 UI 框架：差分渲染、flex 式布局、多行编辑器、可配置键位。读它的价值在于「在极端约束下做交互」。</p>
+		<table class="tbl">
+			<tr><th>文件</th><th>看点</th></tr>
+			<tr><td>src/terminal.ts</td><td>ANSI 转义序列封装、光标控制</td></tr>
+			<tr><td>src/tui.ts</td><td>渲染循环与差分算法（只重绘变化的单元格）</td></tr>
+			<tr><td>src/layout.ts · layout-node.ts</td><td>flexbox 风格布局计算</td></tr>
+			<tr><td>src/editor-component.ts</td><td>多行编辑、选区、剪贴板</td></tr>
+			<tr><td>src/components/</td><td>列表、输入框等组件</td></tr>
+			<tr><td>src/keybindings.ts</td><td>可配置键位系统</td></tr>
+		</table>
+		<p>关键点：为什么差分渲染是必需的（终端重绘昂贵且会闪烁）、事件循环与输入两路如何合流。</p>
+	</div>
+</div>
+
+<div class="layer" data-open="1">
+	<header><span class="n">L4</span><h4>应用层 · coding-agent</h4><span class="days">3–4 天</span><span class="caret">▸</span></header>
+	<div class="body">
+		<p>所有底层能力在这里被组装成一个真正能用的 CLI。也是代码最多、最适合直接动手改的一层。</p>
+		<ol>
+			<li><code>src/main.ts</code> — 入口、参数解析、模式选择</li>
+			<li><code>src/config.ts</code> — 配置文件与环境变量</li>
+			<li><code>src/modes/interactive/interactive-mode.ts</code> — REPL 与输入处理</li>
+			<li><code>src/core/tools/</code> — read / write / edit / bash / grep / find 及权限</li>
+			<li><code>src/core/system-prompt.ts</code> — 系统 prompt 组装与上下文注入</li>
+			<li><code>src/extensions/</code> — 扩展发现、加载、生命周期</li>
+			<li><code>src/modes/</code> — interactive / print / json / rpc 四种模式</li>
+		</ol>
+		<p>配套章节：
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/06-coding-tools/index.html">06</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/07-prompt-resources/index.html">07</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/08-sessions/index.html">08</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/09-compaction/index.html">09</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/10-agent-session/index.html">10</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/11-extensions/index.html">11</a> ·
+		<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/13-modes-rpc/index.html">13</a></p>
+	</div>
+</div>
+
+<div class="layer" data-open="0">
+	<header><span class="n">L5</span><h4>服务端与客户端 · server / client</h4><span class="days">1–2 天</span><span class="caret">▸</span></header>
+	<div class="body">
+		<p>把 agent 跑在进程外，用 WebSocket 暴露给别的应用。这里能看到 L1 的 protocol 为什么那样设计。</p>
+		<table class="tbl">
+			<tr><th>文件</th><th>看点</th></tr>
+			<tr><td>packages/server/src/server.ts</td><td>服务器主逻辑、连接管理</td></tr>
+			<tr><td>packages/server/src/sessions.ts</td><td>会话生命周期</td></tr>
+			<tr><td>packages/server/src/transports/</td><td>传输层抽象</td></tr>
+			<tr><td>packages/client/</td><td>可嵌入的客户端库</td></tr>
+		</table>
+	</div>
+</div>
+</section>
+
+<section id="plan">
+<h2>时间与优先级</h2>
+<p>下面是把两份材料对齐后的推荐节奏。天数按每天 2–3 小时有效阅读估算；「章节」列是可以直接跳去跑的教程。</p>
+<div class="scroll">
+<table class="tbl">
+	<tr><th>周</th><th>内容</th><th>产出（读懂了的标准）</th><th>章节</th></tr>
+	<tr><td>W1</td><td>TS/异步/JSON Schema 补课 + protocol、telemetry</td><td>能说清 CBOR 分帧解决什么问题；能不看代码画出 span 结构</td><td class="num">00 03</td></tr>
+	<tr><td>W2</td><td>ai：types → providers → api 适配</td><td>能解释「同一条 Message 在 OpenAI 与 Anthropic 下如何变成不同请求体」</td><td class="num">01 02</td></tr>
+	<tr><td>W3</td><td>agent：agent-loop 深读 + agent 状态</td><td>能画出一次 tool call 的完整状态转换，并指出错误重试在哪一步</td><td class="num">04 05</td></tr>
+	<tr><td>W4</td><td>coding-agent：tools、system-prompt、sessions</td><td>能自己加一个工具并让模型调用成功</td><td class="num">06 07 08</td></tr>
+	<tr><td>W5</td><td>compaction、AgentSession、extensions</td><td>能解释上下文满了之后消息怎么被折叠</td><td class="num">09 10 11</td></tr>
+	<tr><td>W6</td><td>tui、modes、codemode/mcp</td><td>能改一个键位 / 加一个组件并看到终端反应</td><td class="num">12 13 14</td></tr>
+	<tr><td>W7</td><td>毕业项目：从零组装 mini-pi</td><td>不抄源码写出一个能读文件、跑命令的最小 agent</td><td class="num">15</td></tr>
+</table>
+</div>
+<div class="grid g2" style="margin-top:14px">
+	<div class="card g"><h4>时间不够的读法</h4><p>只读 00 → 01 → 04 → 06 → 15。这是「理解 agent 本质」的最短链路，大约 3 天。</p></div>
+	<div class="card y"><h4>要改 bug / 加功能</h4><p>直接进 06（工具）、07（prompt）、11（扩展）；需要时再回补 04。</p></div>
+</div>
+</section>
+
+<section id="chapters">
+<h2>16 章章节地图</h2>
+<p>取自教程 <code>chapters/</code>，按依赖顺序排列。链接指向本机教程目录，需要先用 <code>node scripts/setup.mjs</code> 初始化过一次。</p>
+<div class="scroll">
+<table class="tbl">
+	<tr><th>#</th><th>章节</th><th>主要源码</th><th>阶段</th></tr>
+	<tr><td class="num">00</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/00-overview/index.html">导论：pi 全景与源码地图</a></td><td>main.ts · sdk.ts</td><td>L1</td></tr>
+	<tr><td class="num">01</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/01-pi-ai-messages/index.html">pi-ai（上）：消息模型与流式事件协议</a></td><td>ai/src/types.ts · utils/event-stream.ts</td><td>L2</td></tr>
+	<tr><td class="num">02</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/02-pi-ai-providers/index.html">pi-ai（下）：Provider、Models 与 API 适配器</a></td><td>ai/src/models.ts · api/*.ts</td><td>L2</td></tr>
+	<tr><td class="num">03</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/03-tools-schema/index.html">工具协议：Schema、校验与流式参数</a></td><td>schema/ · streaming-json.ts</td><td>L2</td></tr>
+	<tr><td class="num">04</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/04-agent-loop/index.html">Agent Loop：智能体的心跳</a></td><td>agent/src/agent-loop.ts</td><td>L2</td></tr>
+	<tr><td class="num">05</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/05-agent-class/index.html">Agent 类：状态、队列与生命周期</a></td><td>agent/src/agent.ts</td><td>L2</td></tr>
+	<tr><td class="num">06</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/06-coding-tools/index.html">编码工具：read / write / edit / bash …</a></td><td>coding-agent/src/core/tools/</td><td>L4</td></tr>
+	<tr><td class="num">07</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/07-prompt-resources/index.html">System Prompt 与资源发现</a></td><td>system-prompt.ts · resource-loader.ts</td><td>L4</td></tr>
+	<tr><td class="num">08</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/08-sessions/index.html">会话持久化：JSONL 树形 Session</a></td><td>session-manager.ts</td><td>L4</td></tr>
+	<tr><td class="num">09</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/09-compaction/index.html">上下文压缩：Compaction</a></td><td>compaction/</td><td>L4</td></tr>
+	<tr><td class="num">10</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/10-agent-session/index.html">AgentSession：总装车间</a></td><td>agent-session.ts · sdk.ts</td><td>L4</td></tr>
+	<tr><td class="num">11</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/11-extensions/index.html">扩展系统：Extensions</a></td><td>core/extensions/</td><td>L4</td></tr>
+	<tr><td class="num">12</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/12-tui/index.html">pi-tui：差分渲染的终端 UI</a></td><td>tui/src/</td><td>L3</td></tr>
+	<tr><td class="num">13</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/13-modes-rpc/index.html">运行模式：Interactive / Print / JSON / RPC</a></td><td>modes/</td><td>L4</td></tr>
+	<tr><td class="num">14</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/14-codemode-mcp/index.html">进阶：Codemode、MCP 与 Tool Search</a></td><td>codemode/ · mcp/</td><td>L4</td></tr>
+	<tr><td class="num">15</td><td><a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/15-mini-pi/index.html">毕业项目：从零组装 mini-pi</a></td><td>综合</td><td>毕业</td></tr>
+</table>
+</div>
+</section>
+
+<section id="labs">
+<h2>实验与源码浏览器</h2>
+<p>教程的杀手锏是实验能直接跑。默认 faux 模型离线可复现，加 <code>--real</code> 走你 <code>~/.pi/agent/models.json</code> 里配置的真实模型（会计费）。</p>
+<pre><code>cd "/Users/mac/Downloads/pi agent源码教程"
+
+# 一次性初始化：软链全局 pi + 从 sourcemap 还原 TS 源码到 source/
+node scripts/setup.mjs
+
+# 跑任意章节实验（faux，离线）
+node chapters/00-overview/examples/01-hello-agent.ts
+
+# 用真实模型
+node chapters/00-overview/examples/01-hello-agent.ts --real
+
+# 全部实验冒烟测试
+node scripts/check-all.mjs
+
+# 打开源码浏览器（file:// 下也能用）
+open source.html</code></pre>
+<h3>推荐第一次动手的三件事</h3>
+<div class="grid g3">
+	<div class="card b"><h4>01-hello-agent.ts</h4><p>最小 agent：一个模型、一个工具、一次循环。看懂它就懂了 80% 的 agent。</p></div>
+	<div class="card g"><h4>02-full-session.ts</h4><p>完整会话：工具 + 会话持久化 + 事件流打印，看到 AgentEvent 的真实时间线。</p></div>
+	<div class="card y"><h4>03-source-atlas.ts</h4><p>源码地图脚本：打印包的依赖关系，用来校准你对分层的理解。</p></div>
+</div>
+</section>
+
+<section id="files">
+<h2>关键文件速查</h2>
+<p>来自 <code>learning-guide/README.md</code> 的速查表，加上了章节号。可以直接搜索（例如输入 <code>tool</code> 或 <code>04</code>）。</p>
+<div class="files">
+	<input class="filter" id="fileFilter" placeholder="过滤：路径 / 说明 / 章节号">
+</div>
+<div class="scroll">
+<table class="tbl" id="fileTable">
+	<tr><th>文件</th><th>描述</th><th>章</th></tr>
+	<tr><td>packages/coding-agent/src/main.ts</td><td>CLI 启动入口：参数解析、模式选择</td><td class="num">00 13</td></tr>
+	<tr><td>packages/agent/src/agent-loop.ts</td><td>Agent 主循环 — 全仓库最该精读的文件</td><td class="num">04</td></tr>
+	<tr><td>packages/agent/src/types.ts</td><td>Agent 类型系统：Tool / AgentState / Harness</td><td class="num">03 05</td></tr>
+	<tr><td>packages/agent/src/agent.ts</td><td>状态持有、消息历史、工具注册</td><td class="num">05</td></tr>
+	<tr><td>packages/ai/src/types.ts</td><td>AI API 类型：Message / Content / Provider</td><td class="num">01</td></tr>
+	<tr><td>packages/ai/src/model-catalog.ts</td><td>模型注册表与元数据</td><td class="num">02</td></tr>
+	<tr><td>packages/ai/src/api/*.ts</td><td>真正的协议适配器（streaming / responses / messages）</td><td class="num">02</td></tr>
+	<tr><td>packages/ai/src/oauth.ts</td><td>OAuth 设备码流程与 token 管理</td><td class="num">02</td></tr>
+	<tr><td>packages/protocol/src/schemas.ts</td><td>TypeBox 消息协议类型</td><td class="num">—</td></tr>
+	<tr><td>packages/protocol/src/codec.ts</td><td>CBOR 编解码</td><td class="num">—</td></tr>
+	<tr><td>packages/protocol/src/framing.ts</td><td>消息分帧（大消息 / 流式）</td><td class="num">—</td></tr>
+	<tr><td>packages/telemetry/src/index.ts</td><td>供应商中立遥测接口</td><td class="num">—</td></tr>
+	<tr><td>packages/tui/src/tui.ts</td><td>TUI 渲染循环与差分渲染</td><td class="num">12</td></tr>
+	<tr><td>packages/tui/src/terminal.ts</td><td>ANSI 转义与光标控制</td><td class="num">12</td></tr>
+	<tr><td>packages/tui/src/layout.ts</td><td>flex 式布局计算</td><td class="num">12</td></tr>
+	<tr><td>packages/tui/src/editor-component.ts</td><td>多行编辑器、选区、剪贴板</td><td class="num">12</td></tr>
+	<tr><td>packages/tui/src/keybindings.ts</td><td>可配置键位系统</td><td class="num">12</td></tr>
+	<tr><td>packages/coding-agent/src/core/tools/</td><td>read / write / edit / bash / grep / find</td><td class="num">06</td></tr>
+	<tr><td>packages/coding-agent/src/core/system-prompt.ts</td><td>系统 prompt 组装与上下文注入</td><td class="num">07</td></tr>
+	<tr><td>packages/coding-agent/src/extensions/</td><td>扩展发现、加载与生命周期</td><td class="num">11</td></tr>
+	<tr><td>packages/coding-agent/src/modes/</td><td>interactive / print / json / rpc</td><td class="num">13</td></tr>
+	<tr><td>packages/server/src/server.ts</td><td>WebSocket 服务器主逻辑</td><td class="num">—</td></tr>
+	<tr><td>packages/server/src/sessions.ts</td><td>服务端会话管理</td><td class="num">—</td></tr>
+	<tr><td>packages/client/</td><td>可嵌入客户端库</td><td class="num">—</td></tr>
+	<tr><td>packages/coding-agent/docs/extensions.md</td><td>扩展开发文档</td><td class="num">11</td></tr>
+	<tr><td>packages/coding-agent/examples/extensions/</td><td>扩展示例：自定义 provider / 沙箱 / subagent</td><td class="num">11</td></tr>
+</table>
+</div>
+</section>
+
+<section id="concepts">
+<h2>核心概念</h2>
+<p>六个概念串起整个框架。每个都指向「定义 → 为什么存在 → 去哪读」。</p>
+
+<h3>Provider（提供商）</h3>
+<p>把不同 LLM 服务的差异收敛成一个接口。它不是「一个函数」，而是「注册表 + 适配器 + 鉴权」三件套：<code>providers/*.ts</code> 负责注册与元数据，<code>api/*.ts</code> 负责真正把内部 Message 翻译成厂商协议、再把流式响应翻译回来。</p>
+<p>为什么要这层：没有它，每加一家模型都要改 agent 循环、UI、会话存储三处。有了它，加厂商只动 <code>ai</code> 一个包。<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/02-pi-ai-providers/index.html">第 02 章</a></p>
+
+<h3>Tool（工具）</h3>
+<p>Agent 可以调用的函数：<code>name</code> + <code>description</code> + JSON Schema 入参 + 执行函数。模型不执行工具，它只返回「我要调哪个、参数是什么」；执行永远在宿主进程里。这是权限模型的基础。<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/03-tools-schema/index.html">第 03 章</a> ·
+<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/06-coding-tools/index.html">第 06 章</a></p>
+
+<h3>Agent Loop（智能体循环）</h3>
+<p>整个框架的心跳：调模型 → 解析工具请求 → 执行 → 结果回填 → 再调模型，直到模型不再请求工具。内核不到 1000 行，其余十几万行都在处理真实世界的边界：厂商差异、取消、重试、流式渲染、长上下文。</p>
+<p class="flow"><span class="s">收集上下文</span><span class="a">→</span><span class="s">调 LLM</span><span class="a">→</span><span class="s">有 tool call?</span><span class="a">→</span><span class="s">执行并回填</span><span class="a">↺</span><span class="s">否则结束</span></p>
+
+<h3>Session（会话）</h3>
+<p>append-only 的 JSONL 树，不是线性日志。树的形状让「回退到某条消息再换个问法」变成一次分支，而不是丢掉后面所有记录。上下文快满时由 compaction 把旧消息折叠成摘要，摘要本身也是树上的一个节点。<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/08-sessions/index.html">第 08 章</a> ·
+<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/09-compaction/index.html">第 09 章</a></p>
+
+<h3>Extension（扩展）</h3>
+<p>pi 的设计取向是「小内核 + 大扩展」：codemode、MCP、tool search 都是内置扩展；plan mode、危险命令确认、子代理是示例扩展。加载器在启动时扫描 <code>~/.pi/extensions/</code> 与项目 <code>.pi/extensions/</code>。想加功能，先想想是不是该写扩展而不是改内核。<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/11-extensions/index.html">第 11 章</a></p>
+
+<h3>三层消息</h3>
+<p><code>Message</code> ⊂ <code>AgentMessage</code> ⊂ <code>SessionEntry</code>：发往模型的最窄，运行时的更丰富（带工具结果、事件），落盘的最全（带时间戳、父指针）。<code>convertToLlm</code> 就站在这条边界上，决定哪些东西进得了请求。<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/00-overview/index.html">第 00 章</a></p>
+</section>
+
+<section id="debug">
+<h2>调试技巧</h2>
+<p>读懂代码的一半靠调试。下面这些来自 <code>learning-guide/README.md</code>，都已在本仓库验证可用。</p>
+<pre><code># 从源码跑 pi（开发版本）
+./pi-test.sh
+
+# 调试 agent 循环
+node --inspect-brk packages/agent/test/agent-loop.test.ts
+
+# 调试 coding agent
+node --inspect-brk packages/coding-agent/src/main.ts
+
+# agent 测试
+cd packages/agent && node --test test/*.test.ts
+
+# 非 e2e 全量测试（在仓库根目录）
+./test.sh
+
+# 特定 vitest 用例（从包根目录）
+node "$(git rev-parse --show-toplevel)/node_modules/vitest/dist/cli.js" --run test/specific.test.ts</code></pre>
+<div class="callout warn">
+	<div class="t">日志别用 console.log</div>
+	<p>交互模式下 stdout 被 TUI 占用，用 <code>console.error()</code> 输出到 stderr 才能看到。</p>
+</div>
+<div class="callout">
+	<div class="t">改测试比读代码快</div>
+	<p>怀疑某段逻辑时，改一个测试断言、看它怎么失败，比在源码里找线索快得多。coding-agent 的测试套件用 faux provider，不需要任何真实 key。</p>
+</div>
+</section>
+
+<section id="faq">
+<h2>常见问题</h2>
+
+<details><summary>为什么用 CBOR 而不是 JSON？</summary>
+<p>CBOR 是二进制格式：更紧凑、解析更快，且原生能装二进制数据（图片、附件）不需要 base64 膨胀。对「高频、含二进制、跨进程」的消息通道，这三条都成立。</p></details>
+
+<details><summary>Agent 如何管理上下文窗口？</summary>
+<p>两层：先由 compaction 在接近上限时把旧消息折叠成摘要（第 09 章），再由 <code>convertToLlm</code> 决定哪些条目最终进入请求。摘要节点本身留在会话树里，可以被后续请求引用。</p></details>
+
+<details><summary>Tool calling 到底是谁在执行？</summary>
+<p>模型只输出「调用哪个工具、参数是什么」（结构化 JSON），宿主进程负责解析、校验 schema、执行、把结果作为新消息发回。所以工具的权限、超时、沙箱全都由宿主决定——这是 pi 能把危险操作交给扩展去管的前提。</p></details>
+
+<details><summary>扩展是怎么加载的？</summary>
+<p>启动时扫描 <code>~/.pi/extensions/</code> 和项目 <code>.pi/extensions/</code>，动态加载模块，注册工具 / 提供商 / 命令 / 主题，并挂到生命周期钩子上。细节见第 11 章与 <code>docs/extensions.md</code>。</p></details>
+
+<details><summary>TUI 的差分渲染是什么？</summary>
+<p>对比新旧两棵渲染树，只把变化的单元格写到终端。终端重绘昂贵且会引起闪烁，全屏重绘在滚动历史里几乎不可用——所以差分不是优化，是必需品。见第 12 章。</p></details>
+
+<details><summary>providers/openai.ts 只有十几行，是不是我看错了文件？</summary>
+<p>没看错。<code>providers/</code> 是注册与元数据入口，真正的协议实现（请求体翻译、流式事件解析）在 <code>packages/ai/src/api/</code>。<code>learning-guide/agent-and-ai.md</code> 专门讲了这处分层。</p></details>
+
+<details><summary>教程版本和仓库版本对不上怎么办？</summary>
+<p>教程基于 <code>pi-coding-agent 1.5.2</code> 的发布包（从 sourcemap 还原），仓库是 0.0.3 的开发版本。行号会有偏移，但结构基本一致。以教程的图理解机制，以仓库的代码做实验。</p></details>
+</section>
+
+<section id="practice">
+<h2>动手实践</h2>
+<p>四个由易到难的练习，每个都有明确的「完成标准」。做完这四个，你就能说「我读过 pi」而不是「我翻过 pi」。</p>
+<div class="grid g2">
+	<div class="card b"><h4>① 加一个工具</h4><p>写一个 <code>wordcount</code> 工具（schema + handler），注册到 coding-agent，让模型在对话里调用它。</p><p style="margin-top:6px;color:var(--fg3)">完成标准：模型主动调用、拿到结果、用结果回答问题。<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/06-coding-tools/index.html">第 06 章</a></p></div>
+	<div class="card g"><h4>② 写一个扩展</h4><p>基于 <code>examples/extensions/</code> 写一个：拦截 bash 里的特定命令并要求确认。</p><p style="margin-top:6px;color:var(--fg3)">完成标准：命令被拦下时能看到你的提示。<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/11-extensions/index.html">第 11 章</a></p></div>
+	<div class="card y"><h4>③ 观察一次压缩</h4><p>把上下文窗口调小，跑一段长对话，打印压缩前后的消息数量与 token 数。</p><p style="margin-top:6px;color:var(--fg3)">完成标准：能画出压缩发生在哪一步、摘要长什么样。<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/09-compaction/index.html">第 09 章</a></p></div>
+	<div class="card p"><h4>④ 组装 mini-pi</h4><p>不抄 <code>agent</code> 源码，只用 <code>ai</code> + 自己写的循环，做出能读文件、跑命令的最小 agent。</p><p style="margin-top:6px;color:var(--fg3)">完成标准：几百行、能完成「找到并修复一个小 bug」。<a href="file:///Users/mac/Downloads/pi%20agent%E6%BA%90%E7%A0%81%E6%95%99%E7%A8%8B/chapters/15-mini-pi/index.html">第 15 章</a></p></div>
+</div>
+
+<div class="callout tip" style="margin-top:22px">
+	<div class="t">学习建议（原文精神）</div>
+	<p>先类型后实现：每个包的 <code>types.ts</code> 是理解该包的钥匙。重点攻 <code>agent-loop.ts</code>。对比不同 provider 的实现。不要只读代码——改测试、跑实验、改代码看行为。</p>
+</div>
+</section>
+
+<footer>
+	<p>本页由仓库 <code>learning-guide/</code>（README · prerequisites · protocol · agent-and-ai）与 <code>pi agent 源码教程</code>（16 章 HTML 教程）合并整理。源码版权归 © Mario Zechner / earendil-works（MIT）。</p>
+	<p>教程目录：<code>/Users/mac/Downloads/pi agent源码教程</code> · 仓库：<code>/Users/mac/Agent/niannian/pi-learning</code></p>
+</footer>
+
+</main>
+</div>
+
+<script>
+(function(){
+	// theme
+	const root=document.documentElement;
+	const btn=document.getElementById("themeBtn");
+	btn.addEventListener("click",()=>{
+		const next=root.getAttribute("data-theme")==="dark"?"light":"dark";
+		root.setAttribute("data-theme",next);
+		try{localStorage.setItem("pi-learn:theme",next)}catch(e){}
+	});
+
+	// collapsible layers
+	document.querySelectorAll(".layer > header").forEach(h=>{
+		h.addEventListener("click",()=>{
+			const L=h.parentElement;
+			L.dataset.open=L.dataset.open==="1"?"0":"1";
+		});
+	});
+
+	// checklists + progress
+	const boxes=[...document.querySelectorAll(".check input")];
+	const progText=document.getElementById("progText");
+	const progBar=document.getElementById("progBar");
+	function load(){
+		let saved={};
+		try{saved=JSON.parse(localStorage.getItem("pi-learn:check")||"{}")}catch(e){}
+		boxes.forEach((b,i)=>{
+			b.checked=!!saved[i];
+			b.closest("li").classList.toggle("done",b.checked);
+		});
+	}
+	function save(){
+		const o={};
+		boxes.forEach((b,i)=>{if(b.checked)o[i]=1});
+		try{localStorage.setItem("pi-learn:check",JSON.stringify(o))}catch(e){}
+	}
+	function render(){
+		const n=boxes.filter(b=>b.checked).length;
+		progText.textContent=n+" / "+boxes.length;
+		progBar.style.width=(boxes.length?n/boxes.length*100:0)+"%";
+	}
+	boxes.forEach(b=>b.addEventListener("change",()=>{
+		b.closest("li").classList.toggle("done",b.checked);
+		save();render();
+	}));
+	load();render();
+
+	// file filter
+	const filter=document.getElementById("fileFilter");
+	const rows=[...document.querySelectorAll("#fileTable tr")].slice(1);
+	filter.addEventListener("input",()=>{
+		const q=filter.value.trim().toLowerCase();
+		rows.forEach(r=>{
+			r.style.display=!q||r.textContent.toLowerCase().includes(q)?"":"none";
+		});
+	});
+
+	// copy buttons on pre
+	document.querySelectorAll("pre").forEach(pre=>{
+		const b=document.createElement("button");
+		b.className="copy";b.textContent="复制";
+		b.addEventListener("click",async()=>{
+			const code=pre.querySelector("code");
+			try{
+				await navigator.clipboard.writeText(code?code.textContent:pre.textContent);
+				b.textContent="已复制";
+			}catch(e){b.textContent="失败"}
+			setTimeout(()=>{b.textContent="复制"},1200);
+		});
+		pre.appendChild(b);
+	});
+
+	// toc active
+	const links=[...document.querySelectorAll("nav.toc a")];
+	const secs=links.map(a=>document.querySelector(a.getAttribute("href"))).filter(Boolean);
+	const io=new IntersectionObserver(es=>{
+		es.forEach(e=>{
+			if(!e.isIntersecting)return;
+			links.forEach(a=>a.classList.toggle("on",a.getAttribute("href")==="#"+e.target.id));
+		});
+	},{rootMargin:"-70px 0px -70% 0px"});
+	secs.forEach(s=>io.observe(s));
+})();
+</script>
+</body>
+</html>
