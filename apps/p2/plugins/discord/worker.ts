@@ -8,13 +8,11 @@ import {
 	type ConversationId,
 	defineDoc,
 	defineExtension,
-	type EntryId,
 	type EntryRecord,
 	type Harness,
 	InboxDoc,
 	LiveDoc,
 	ROOT_CONVERSATION_ID,
-	type SubmissionId,
 	section,
 } from "@earendil-works/pi-durable";
 import {
@@ -27,7 +25,7 @@ import {
 	type Ref,
 	safeFileName,
 } from "@p2/app/v1";
-import { DOWNLOADS, displayName, durableContext, FILE_CHUNK, Files, findDownload, UPLOADS } from "@p2/app/v1/node";
+import { durableContext, Files, findDownload } from "@p2/app/v1/node";
 import { Extensions, harnessOf, isTopLevel, mainConversation } from "@p2/app/v1/worker";
 import { Conversation } from "../chat/contract.ts";
 import { Attachments } from "../files/contract.ts";
@@ -35,18 +33,7 @@ import { offeredBy } from "../send-file/contract.ts";
 import { mirrorLock } from "../sessions/lock-worker.ts";
 import { Subagents } from "../subagents/contract.worker.ts";
 import { DISCORD_BATCH, DiscordIngress } from "./contract.ts";
-
-/** Attachments up to this size are downloaded (the composer's upload limit). */
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
-
-/** The image types the model may get inline (the composer's: files/uploads.ts). */
-const IMAGE_TYPES: Record<string, string> = {
-	png: "image/png",
-	jpg: "image/jpeg",
-	jpeg: "image/jpeg",
-	gif: "image/gif",
-	webp: "image/webp",
-};
+import { type Download, download, readTurn } from "./ingress.ts";
 
 /**
  * The session's Discord link as its agents learn it (session-scoped): the channel, and the conversations of its threads'
@@ -116,8 +103,8 @@ export default defineFacet((host) => {
 					}, durableContext(ctx));
 					const ids: { id: string; name: string }[] = [];
 					for (const file of downloads) {
-						const id = await download(files, file, ctx);
-						if (id) ids.push({ id, name: file.name });
+						const got = await downloadAttachment(files, file, ctx);
+						if (got) ids.push({ id: got, name: file.name });
 					}
 					const resolved = ids.length
 						? await attachments.resolve({ ids: ids.map((entry) => entry.id), conversation: target }, ctx)
@@ -152,47 +139,8 @@ export default defineFacet((host) => {
 					}, durableContext(ctx));
 					return null;
 				},
-				turn: async ({ submissionId }, ctx) => {
-					const durable = harness().durable;
-					const context = durableContext(ctx);
-					const submission = await durable.submission(submissionId as SubmissionId, context);
-					// Gone: withdrawn while queued (a stop).
-					if (!submission) return { state: "stopped" as const };
-					const record = await submission.status(context);
-					if (record.type !== "input") return { state: "unanswered" as const, reason: "Not an input.", files: [] };
-					if (record.status === "queued" || record.status === "placed") return { state: "pending" as const };
-					if (record.status === "unanswered" && record.reason === "aborted") return { state: "stopped" as const };
-					// The turn's span: from its input (its message's time) to its answer, or until now without one.
-					const input =
-						record.entry === undefined
-							? undefined
-							: await entryOf(durable, record.conversationId, record.entry, context);
-					const start = input?.model?.[0]?.timestamp ?? 0;
-					if (record.status === "unanswered")
-						return {
-							state: "unanswered" as const,
-							reason: record.reason || "The turn ended without an answer.",
-							files: await offered(files, record.conversationId, start, Date.now(), ctx),
-						};
-					const answer = await entryOf(durable, record.conversationId, record.answer, context);
-					const message = answer?.model?.[0] as AssistantMessage | undefined;
-					if (message?.stopReason === "aborted") return { state: "stopped" as const };
-					const text = (message?.content ?? [])
-						.flatMap((part) => (part.type === "text" ? [part.text] : []))
-						.join("")
-						.trim();
-					const sent = await offered(files, record.conversationId, start, message?.timestamp ?? Date.now(), ctx);
-					return text || sent.length
-						? { state: "answered" as const, text, files: sent, answer: record.answer }
-						: {
-								state: "unanswered" as const,
-								reason:
-									message?.stopReason === "error"
-										? (message.errorMessage ?? "The model failed.")
-										: "The answer has no text.",
-								files: sent,
-							};
-				},
+				turn: ({ submissionId }, ctx) =>
+					readTurn(harness().durable, files, offeredBy, submissionId, durableContext(ctx), ctx),
 				read: async ({ id, offset, length }, ctx) => {
 					const found = await findDownload(files, id, ctx);
 					if (!found) throw new Error("No such file");
@@ -271,80 +219,15 @@ export default defineFacet((host) => {
 	});
 });
 
-/** Downloads a Discord attachment into the session's uploads (its key makes a retry find it); its upload ID. */
-async function download(
-	files: Ref<typeof Files>,
-	file: { url: string; name: string; size: number; key: string; ref: string },
-	ctx: Ctx,
-): Promise<string | undefined> {
-	const existing = await files.byKey({ space: UPLOADS, key: file.key }, ctx);
-	if (existing) return file.key;
-	if (file.size > MAX_UPLOAD_BYTES) return undefined;
-	const path = `${file.key.replaceAll(":", "-")}-${safeFileName(file.name)}`;
-	const begun = await files.begin(
-		{
-			space: UPLOADS,
-			path,
-			mime: IMAGE_TYPES[path.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream",
-			source: "discord",
-			key: file.key,
-			ref: file.ref,
-			meta: { name: file.name },
-		},
-		ctx,
-	);
-	if (begun.kind === "exists") return file.key;
-	try {
-		const response = await fetch(file.url, { signal: ctx.abortSignal });
-		if (!response.ok || !response.body) throw new Error(`Download failed: ${response.status}`);
-		let offset = 0;
-		let pending = Buffer.alloc(0);
-		const reader = response.body.getReader();
-		for (;;) {
-			const { done, value: chunk } = await reader.read();
-			if (done) break;
-			pending = Buffer.concat([pending, chunk]);
-			while (pending.length >= FILE_CHUNK) {
-				await files.append({ upload: begun.upload, offset, bytes: pending.subarray(0, FILE_CHUNK) }, ctx);
-				offset += FILE_CHUNK;
-				pending = pending.subarray(FILE_CHUNK);
-				if (offset > MAX_UPLOAD_BYTES) throw new Error("Attachment too large");
-			}
-		}
-		if (pending.length) await files.append({ upload: begun.upload, offset, bytes: pending }, ctx);
-		await files.finish(begun.upload, ctx);
-		return file.key;
-	} catch (error) {
-		await files.cancel(begun.upload, ctx).catch(() => {});
-		console.error(`p2 discord: could not download ${file.name}:`, error instanceof Error ? error.message : error);
+/** Downloads a Discord attachment into the session's uploads; its upload ID (a failure is said in the log). */
+async function downloadAttachment(files: Ref<typeof Files>, file: Download, ctx: Ctx): Promise<string | undefined> {
+	const got = await download(files, file, "discord", ctx);
+	if (got === undefined) return undefined;
+	if ("error" in got) {
+		console.error(`p2 discord: could not download ${file.name}:`, got.error);
 		return undefined;
 	}
-}
-
-/**
- * The files conversation `conversation` offered (`send_file`, also from scripts) between `start` and `end` (ms since
- * the epoch): a turn's, oldest first.
- */
-async function offered(
-	files: Ref<typeof Files>,
-	conversation: number,
-	start: number,
-	end: number,
-	ctx: Ctx,
-): Promise<{ id: string; name: string; size: number }[]> {
-	const found: { id: string; name: string; size: number }[] = [];
-	let after: string | undefined;
-	do {
-		const page = await files.byRef(
-			{ space: DOWNLOADS, ref: offeredBy(conversation), ...(after ? { after } : {}) },
-			ctx,
-		);
-		for (const file of page.items)
-			if (file.key && file.created >= start && file.created <= end)
-				found.push({ id: file.key, name: displayName(file), size: file.size });
-		after = page.next;
-	} while (after !== undefined);
-	return found;
+	return got.id;
 }
 
 /** When the newest input of `conversation` was sent (its user message's time): where its last turn began. */
@@ -362,17 +245,6 @@ async function lastInputTime(
 /** A cost in dollars, as the cost sheet writes it. */
 function dollars(value: number): string {
 	return `$${value.toFixed(value >= 0.01 || value === 0 ? 4 : 6)}`;
-}
-
-async function entryOf(
-	durable: Harness,
-	conversationId: ConversationId,
-	id: EntryId,
-	context: Context,
-): Promise<EntryRecord | undefined> {
-	const conversation = await durable.conversation(conversationId, context);
-	const page = await conversation?.entries({ minEntryId: id, maxEntryId: id }, 1, undefined, context);
-	return page?.items[0];
 }
 
 /** When an entry was written, if it is a finished answer (an assistant message that ended its turn). */

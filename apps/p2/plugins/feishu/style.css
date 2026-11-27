@@ -1,0 +1,32 @@
+.feishu-sheet .sheet-body {
+	display: grid;
+	gap: var(--s3);
+	align-content: start;
+}
+.feishu-sheet .list {
+	margin-top: 0;
+}
+.feishu-hint,
+.feishu-sheet p {
+	margin: 0;
+}
+/* A read-only row: a row's height and inset, no press state. */
+.feishu-row {
+	display: flex;
+	align-items: center;
+	gap: var(--s2);
+	min-height: var(--row);
+	font-size: var(--fs-md);
+	border-bottom: 1px solid var(--line);
+}
+.feishu-row > span {
+	flex: 1;
+	min-width: 0;
+}
+.feishu-steps {
+	margin: 0;
+	padding-left: var(--s5);
+}
+.feishu-indent {
+	padding-left: var(--s5);
+}
