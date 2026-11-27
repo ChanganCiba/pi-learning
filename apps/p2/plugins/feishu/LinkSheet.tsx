@@ -1,10 +1,10 @@
 // A session's Feishu link (its Session sheet → Feishu). Linked: the bot and chat (fixed), who may wake Pi (editable,
 // saved in place and applied at once), and Unlink. Not linked: the form that links it: the bot, a chat no other
 // session has (its groups, the direct chats that wrote to it), and who may wake Pi.
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, liveWith } from "@p2/app/v1";
 import { closeLayers, errorText, openLayer, Sheet, useObject, useReadable } from "@p2/app/v1/web";
 import { useEffect, useState } from "react";
-import { Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../sessions/contract.ts";
 import { back, botName } from "./BotsSheet.tsx";
 import type { Binding, Chat, Wake } from "./contract.ts";
 import { useFeishu } from "./held.ts";
@@ -205,7 +205,7 @@ function useChats(bot: string | undefined) {
 function LinkForm({ session, bindings }: { session: string; bindings: readonly Binding[] }) {
 	const feishu = useFeishu();
 	const bots = (useReadable(feishu?.bots) ?? []).filter((bot) => bot.status.state === "connected");
-	const sessions = useReadable(useObject(Sessions, {}, { variant: "owner" })?.sessions) ?? [];
+	const sessions = useReadable(liveWith(useObject(Sessions, {}), ...SESSIONS_OWNER)?.sessions) ?? [];
 	const [chosenBot, setChosenBot] = useState("");
 	const [chatId, setChatId] = useState("");
 	const [access, setAccess] = useState<Access>({ who: "anyone", users: "" });

@@ -64,60 +64,57 @@ export default defineFacet((host) => {
 		const files = self.get(Files, {});
 		const attachments = self.get(Attachments, {});
 		return {
-			variant: "server",
-			members: {
-				deliver: async ({ requestId, author, text, context, files: downloads }, ctx) => {
-					const durable = harness().durable;
-					const target = await mainConversation(durable, durableContext(ctx));
-					await durable.commit(async (tx) => {
-						(await tx.doc(FeishuLinkDoc)).link = { chat: context.chat, chatType: context.chatType };
-					}, durableContext(ctx));
-					const ids: { id: string; name: string }[] = [];
-					for (const file of downloads) {
-						const got = await download(files, file, "feishu", ctx);
-						if (got === undefined) continue;
-						// A failed download is said in the input: the agent knows what it did not get.
-						if ("error" in got) text += `\n[attachment ${file.name} could not be downloaded: ${got.error}]`;
-						else ids.push({ id: got.id, name: file.name });
-					}
-					const resolved = ids.length
-						? await attachments.resolve({ ids: ids.map((entry) => entry.id), conversation: target }, ctx)
-						: [];
-					const who = { kind: "guest" as const, id: `feishu:${author.id}`, name: `${author.name} · Feishu` };
-					const data: MessageData & { feishu: typeof context } = {
-						author: who,
+			deliver: async ({ requestId, author, text, context, files: downloads }, ctx) => {
+				const durable = harness().durable;
+				const target = await mainConversation(durable, durableContext(ctx));
+				await durable.commit(async (tx) => {
+					(await tx.doc(FeishuLinkDoc)).link = { chat: context.chat, chatType: context.chatType };
+				}, durableContext(ctx));
+				const ids: { id: string; name: string }[] = [];
+				for (const file of downloads) {
+					const got = await download(files, file, "feishu", ctx);
+					if (got === undefined) continue;
+					// A failed download is said in the input: the agent knows what it did not get.
+					if ("error" in got) text += `\n[attachment ${file.name} could not be downloaded: ${got.error}]`;
+					else ids.push({ id: got.id, name: file.name });
+				}
+				const resolved = ids.length
+					? await attachments.resolve({ ids: ids.map((entry) => entry.id), conversation: target }, ctx)
+					: [];
+				const who = { kind: "guest" as const, id: `feishu:${author.id}`, name: `${author.name} · Feishu` };
+				const data: MessageData & { feishu: typeof context } = {
+					author: who,
+					text,
+					attachments: ids,
+					feishu: context,
+				};
+				const chat = await ctx.get(Conversation, { conversation: target });
+				const { submissionId } = await chat.submit(
+					{
 						text,
-						attachments: ids,
-						feishu: context,
-					};
-					const chat = await ctx.get(Conversation, { conversation: target });
-					const { submissionId } = await chat.submit(
-						{
-							text,
-							requestId,
-							// A batch while a turn runs joins it: its answer replies to the newest message.
-							whenBusy: "steer",
-							author: who,
-							...(resolved.length ? { files: resolved } : {}),
-							entry: { kind: FEISHU_BATCH, data },
-						},
-						ctx,
-					);
-					return { conversation: target, submissionId };
-				},
-				unlinked: async (ctx) => {
-					await harness().durable.commit(async (tx) => {
-						(await tx.doc(FeishuLinkDoc)).link = null;
-					}, durableContext(ctx));
-					return null;
-				},
-				turn: ({ submissionId }, ctx) =>
-					readTurn(harness().durable, files, offeredBy, submissionId, durableContext(ctx), ctx),
-				read: async ({ id, offset, length }, ctx) => {
-					const found = await findDownload(files, id, ctx);
-					if (!found) throw new Error("No such file");
-					return files.read({ id: found.file.id, offset, length }, ctx);
-				},
+						requestId,
+						// A batch while a turn runs joins it: its answer replies to the newest message.
+						whenBusy: "steer",
+						author: who,
+						...(resolved.length ? { files: resolved } : {}),
+						entry: { kind: FEISHU_BATCH, data },
+					},
+					ctx,
+				);
+				return { conversation: target, submissionId };
+			},
+			unlinked: async (ctx) => {
+				await harness().durable.commit(async (tx) => {
+					(await tx.doc(FeishuLinkDoc)).link = null;
+				}, durableContext(ctx));
+				return null;
+			},
+			turn: ({ submissionId }, ctx) =>
+				readTurn(harness().durable, files, offeredBy, submissionId, durableContext(ctx), ctx),
+			read: async ({ id, offset, length }, ctx) => {
+				const found = await findDownload(files, id, ctx);
+				if (!found) throw new Error("No such file");
+				return files.read({ id: found.file.id, offset, length }, ctx);
 			},
 		};
 	});

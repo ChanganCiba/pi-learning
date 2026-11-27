@@ -1,7 +1,7 @@
 // The owner's Feishu bots (Settings › Feishu): the list with each bot's status, adding one by its app's credentials,
 // and a bot's own sheet (identity, its linked sessions read-only, removing it). Linking a session to a chat happens
 // from the session (LinkSheet.tsx), not here.
-import { BACKGROUND_CONTEXT } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, liveWith } from "@p2/app/v1";
 import {
 	ChevronIcon,
 	closeLayers,
@@ -14,7 +14,7 @@ import {
 	useReadable,
 } from "@p2/app/v1/web";
 import { useState } from "react";
-import { Sessions } from "../sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../sessions/contract.ts";
 import type { BotStatus, BotView } from "./contract.ts";
 import { useFeishu } from "./held.ts";
 
@@ -155,7 +155,7 @@ export function BotSheet({ id }: { id: string }) {
 	const feishu = useFeishu();
 	const bots = useReadable(feishu?.bots);
 	const bindings = useReadable(feishu?.bindings) ?? [];
-	const sessions = useReadable(useObject(Sessions, {}, { variant: "owner" })?.sessions) ?? [];
+	const sessions = useReadable(liveWith(useObject(Sessions, {}), ...SESSIONS_OWNER)?.sessions) ?? [];
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string>();
 	const [removing, setRemoving] = useState(false);

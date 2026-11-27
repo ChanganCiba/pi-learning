@@ -99,9 +99,8 @@ export const Feishu = remote("p2.feishu", {
 	version: 1,
 	params: {},
 	hostAddress: serverHost,
-	variants: {
-		owner: { state: { bots: arr(BotSchema), bindings: arr(BindingSchema) }, methods: OWNER_METHODS },
-	},
+	state: { bots: arr(BotSchema), bindings: arr(BindingSchema) },
+	methods: OWNER_METHODS,
 });
 
 /** A file the agent offered in a turn (`send_file`): the session's download, to send back to the chat. */
@@ -126,47 +125,43 @@ export const FeishuIngress = remote("p2.feishu-ingress", {
 	version: 1,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: {
-		server: {
-			methods: {
-				/** The session is no longer linked: its agent's Feishu prompt section goes. */
-				unlinked: method(),
-				/**
-				 * Places a batch as one input of the main conversation, steering the turn under way while it is busy (the
-				 * batch joins it); a retried `requestId` is placed once. Its agent learns that it answers Feishu.
-				 */
-				deliver: method(
-					obj({
-						requestId: str({ maxLength: 200 }),
-						author: obj({ id: str(), name: str() }),
-						text: str({ maxLength: 200_000 }),
-						context: obj({ chat: str(), chatType: ChatTypeSchema, messages: int() }),
-						files: arr(FeishuFileSchema, { maxItems: MAX_ATTACHMENTS }),
-					}),
-					obj({ conversation: int(), submissionId: num() }),
-				),
-				/** The submission's turn: pending, answered, stopped, or ended without an answer; with its offered files. */
-				turn: method(
-					obj({ submissionId: num() }),
-					union([
-						obj({ state: literal("pending") }),
-						obj({
-							state: literal("answered"),
-							text: str(),
-							thinking: opt(str()),
-							files: arr(OfferedFileSchema),
-							answer: num(),
-						}),
-						obj({ state: literal("stopped") }),
-						obj({ state: literal("unanswered"), reason: str(), files: arr(OfferedFileSchema) }),
-					]),
-				),
-				/** `length` bytes (at most 4 MiB) of offered file `id` from `offset` (fewer at its end). */
-				read: method(
-					obj({ id: str(), offset: int({ minimum: 0 }), length: int({ minimum: 1, maximum: 4 * 1024 * 1024 }) }),
-					bytes(),
-				),
-			},
-		},
+	methods: {
+		/** The session is no longer linked: its agent's Feishu prompt section goes. */
+		unlinked: method(),
+		/**
+		 * Places a batch as one input of the main conversation, steering the turn under way while it is busy (the
+		 * batch joins it); a retried `requestId` is placed once. Its agent learns that it answers Feishu.
+		 */
+		deliver: method(
+			obj({
+				requestId: str({ maxLength: 200 }),
+				author: obj({ id: str(), name: str() }),
+				text: str({ maxLength: 200_000 }),
+				context: obj({ chat: str(), chatType: ChatTypeSchema, messages: int() }),
+				files: arr(FeishuFileSchema, { maxItems: MAX_ATTACHMENTS }),
+			}),
+			obj({ conversation: int(), submissionId: num() }),
+		),
+		/** The submission's turn: pending, answered, stopped, or ended without an answer; with its offered files. */
+		turn: method(
+			obj({ submissionId: num() }),
+			union([
+				obj({ state: literal("pending") }),
+				obj({
+					state: literal("answered"),
+					text: str(),
+					thinking: opt(str()),
+					files: arr(OfferedFileSchema),
+					answer: num(),
+				}),
+				obj({ state: literal("stopped") }),
+				obj({ state: literal("unanswered"), reason: str(), files: arr(OfferedFileSchema) }),
+			]),
+		),
+		/** `length` bytes (at most 4 MiB) of offered file `id` from `offset` (fewer at its end). */
+		read: method(
+			obj({ id: str(), offset: int({ minimum: 0 }), length: int({ minimum: 1, maximum: 4 * 1024 * 1024 }) }),
+			bytes(),
+		),
 	},
 });

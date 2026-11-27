@@ -251,17 +251,14 @@ export default defineFacet((host) => {
 		if (!isOwner(principal)) throw forbidden("Feishu is the owner's");
 		const store = self.get(FeishuStore, {});
 		return {
-			variant: "owner",
-			members: {
-				bots: store.bots,
-				bindings: store.bindings,
-				addBot: (args, ctx) => store.addBot(args, ctx),
-				removeBot: (args, ctx) => store.removeBot(args, ctx),
-				chats: (args, ctx) => store.chats(args, ctx),
-				link: (args, ctx) => store.link(args, ctx),
-				unlink: (args, ctx) => store.unlink(args, ctx),
-				updateLink: (args, ctx) => store.updateLink(args, ctx),
-			},
+			bots: store.bots,
+			bindings: store.bindings,
+			addBot: (args, ctx) => store.addBot(args, ctx),
+			removeBot: (args, ctx) => store.removeBot(args, ctx),
+			chats: (args, ctx) => store.chats(args, ctx),
+			link: (args, ctx) => store.link(args, ctx),
+			unlink: (args, ctx) => store.unlink(args, ctx),
+			updateLink: (args, ctx) => store.updateLink(args, ctx),
 		};
 	});
 });
