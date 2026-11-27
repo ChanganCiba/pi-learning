@@ -31,8 +31,9 @@ export function feishuPrompt(where: string): string {
 	return [
 		`Your input comes from ${where}; your final answer of each turn is posted there as the reply (as Markdown), with`,
 		"the files you offer with send_file during the turn sent after it. Nothing else is posted (not intermediate",
-		"text, thinking or tool output), so make the final answer complete on its own. Each line names its author (in",
-		"a group with their open ID, as in `Ann (<ou_1234>): text`). Keep answers concise: they are read on a phone.",
+		"text, thinking or tool output), so make the final answer complete on its own. In a group, each line names its",
+		"author with their open ID, as in `Ann (<ou_1234>): text`; a direct chat's lines are the person's words alone.",
+		"Keep answers concise: they are read on a phone.",
 	].join(" ");
 }
 

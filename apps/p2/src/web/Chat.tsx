@@ -313,9 +313,10 @@ function rowFeatures(row: TranscriptRow, width: number): RowFeatures {
  */
 export const rowEstimates = new RowEstimator<TranscriptRow>(rowFeatures, 120);
 
-/** Whether a message is someone else's (a subagent's, another session's, a guest's): `Incoming`, not a bubble. */
+/** Whether a message is someone else's (a subagent's, another session's, a guest's): `Incoming`, not a bubble. A
+ * chat bridge's inbound message (`bubble`) is the person's own words: it shows as their bubble. */
 const incoming = (item: Extract<Item, { type: "user" }>): boolean =>
-	Boolean(item.agent || item.peer || item.author?.kind === "guest");
+	Boolean(item.agent || item.peer || (item.author?.kind === "guest" && !item.bubble));
 
 const AGENT_VERBS = { answered: "answered", question: "asks", note: "wrote", failed: "failed" } as const;
 

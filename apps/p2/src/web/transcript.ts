@@ -86,6 +86,8 @@ export type Item =
 			replyTo?: ReplyQuote;
 			/** A plugin's short note about the message, e.g. how much chat a mention passed on. */
 			note?: string;
+			/** Shown as the reader's own bubble (a chat bridge's inbound message), though its author is a guest. */
+			bubble?: boolean;
 	  }
 	| {
 			type: "assistant";
@@ -253,7 +255,10 @@ function cachedItems(entry: EntryRecord, inputs: readonly unknown[], build: () =
 export type ReplyQuote = { entryId: number; name: string; excerpt: string };
 
 /** What a plugin adds to its entry kind's messages (see `TranscriptEntries` in plugins/chat/contract.ts). */
-export type EntryDisplayOf = (kind: string, data: unknown) => { replyTo?: ReplyQuote; note?: string } | undefined;
+export type EntryDisplayOf = (
+	kind: string,
+	data: unknown,
+) => { replyTo?: ReplyQuote; note?: string; text?: string; bubble?: boolean } | undefined;
 
 /** A `p2.shell` entry as a marker: `$ command`, and the output with how it ended. */
 function shellItems(key: string, raw: unknown): Item[] {

@@ -63,10 +63,28 @@ export type DeliveredFile = {
 	ref: string;
 };
 
+/** What the slash commands need of the server (sessions, projects); `null` project: none. */
+export type CommandPort = {
+	/** The linked session's location, for a new session's or project's default. */
+	location(session: string): Promise<{ cwd: string; env: string | null } | undefined>;
+	/** A new session at a location, put into `project` when named: its ID and title. */
+	createSession(input: {
+		cwd: string;
+		env: string | null;
+		project: string | null;
+	}): Promise<{ id: string; title: string }>;
+	/** The live projects, in the owner's order, each with its default place's path. */
+	projects(): Promise<{ name: string; path: string }[]>;
+	/** A new project at `path` on this device. */
+	createProject(name: string, path: string): Promise<void>;
+};
+
 /** What the relay needs of a session (its worker's `FeishuIngress`, the catalog). */
 export type SessionPort = {
 	/** Whether the session exists and is not archived; why not otherwise. */
 	usable(session: string): Promise<string | undefined>;
+	/** The session is no longer this chat's (a /new switched away): its agent's Feishu prompt section goes. */
+	unlinked(session: string): Promise<void>;
 	deliver(
 		session: string,
 		input: {
@@ -117,6 +135,7 @@ export class Relay {
 	/** Answers posted lately (session and entry): a run's other inputs, settled later, post nothing. */
 	readonly #posted: string[] = [];
 	readonly #sessions: SessionPort;
+	readonly #commands: CommandPort;
 	readonly #state: StatePort;
 	readonly #report: (error: string) => void;
 
@@ -124,11 +143,13 @@ export class Relay {
 	constructor(
 		feishu: (bot: string) => FeishuPort | undefined,
 		sessions: SessionPort,
+		commands: CommandPort,
 		state: StatePort,
 		report: (error: string) => void,
 	) {
 		this.#feishu = feishu;
 		this.#sessions = sessions;
+		this.#commands = commands;
 		this.#state = state;
 		this.#report = report;
 	}
@@ -139,13 +160,64 @@ export class Relay {
 		return port;
 	}
 
-	/** A message bot `bot` received: one that wakes Pi in a chat linked through it delivers. */
+	/** A message bot `bot` received: a slash command runs now; anything else that wakes Pi delivers. */
 	async onMessage(bot: string, message: FeishuMessage): Promise<void> {
 		const port = this.#port(bot);
 		if (message.author.id === port.botId) return;
 		const binding = this.#state.value().bindings[message.chatId];
 		if (!binding || binding.botId !== bot || !wakes(binding, message)) return;
-		await this.deliver(binding.chatId, message);
+		const command = commandOf(message.text);
+		if (command) await this.#command(binding, message, command);
+		else await this.deliver(binding.chatId, message);
+	}
+
+	/** Runs a slash command and replies; the message never reaches the agent (nor later batches: `commandOf`). */
+	async #command(binding: Binding, message: FeishuMessage, command: Command): Promise<void> {
+		const port = this.#port(binding.botId);
+		let text: string;
+		try {
+			text = await this.#run(binding, command);
+		} catch (error) {
+			text = `指令失败：${error instanceof Error ? error.message : String(error)}`;
+		}
+		await port.reply(binding.chatId, message.id, text);
+	}
+
+	async #run(binding: Binding, command: Command): Promise<string> {
+		switch (command.name) {
+			case "help":
+				return HELP;
+			case "projects": {
+				const projects = await this.#commands.projects();
+				if (!projects.length) return "还没有项目。用 /project 名字 [路径] 新建一个。";
+				return ["项目：", ...projects.map((project) => `- ${project.name}（${project.path}）`)].join("\n");
+			}
+			case "project": {
+				const [name, path] = command.args;
+				if (!name) return "用法：/project 名字 [路径]（默认路径：当前会话的目录）";
+				const at = path ?? (await this.#commands.location(binding.session))?.cwd ?? "~";
+				await this.#commands.createProject(name, at);
+				return `已创建项目「${name}」（${at}）。/new ${name} 可在其中新建会话。`;
+			}
+			case "new": {
+				const [project] = command.args;
+				if (project !== undefined) {
+					const projects = await this.#commands.projects();
+					if (!projects.some((known) => known.name === project))
+						return `没有叫「${project}」的项目。/projects 查看列表。`;
+				}
+				const where = (await this.#commands.location(binding.session)) ?? { cwd: "~", env: null };
+				const created = await this.#commands.createSession({ ...where, project: project ?? null });
+				const previous = binding.session;
+				await this.#state.change((draft) => {
+					const current = draft.bindings[binding.chatId];
+					if (current) current.session = created.id;
+				});
+				// Best effort: the old session may be gone; it only keeps a stale prompt section then.
+				await this.#sessions.unlinked(previous).catch(() => {});
+				return `已新建会话「${created.title}」${project ? `（项目 ${project}）` : ""}，这个聊天从现在起连着它。`;
+			}
+		}
 	}
 
 	/**
@@ -187,7 +259,7 @@ export class Relay {
 		const window = new BatchWindow(BATCH_CAP);
 		try {
 			for await (const message of history(port, chatId, binding.cursor, trigger.createdAt))
-				if (message.author.id !== port.botId) window.add(message);
+				if (message.author.id !== port.botId && !isCommand(binding, message)) window.add(message);
 		} catch (error) {
 			this.#report(
 				`reading ${binding.chatName}'s history failed: ${error instanceof Error ? error.message : error}`,
@@ -201,7 +273,7 @@ export class Relay {
 		const where =
 			binding.chatType === "group" ? `group "${binding.chatName}"` : `direct chat with ${binding.chatName}`;
 		const header = `[Feishu ${where}: ${plural(window.total)} since the last delivery${left}]`;
-		const batch = await batchOf(window.messages, port, header);
+		const batch = await batchOf(window.messages, port, header, binding.chatType);
 		let delivered: { conversation: number; submissionId: number };
 		try {
 			delivered = await this.#sessions.deliver(binding.session, {
@@ -246,8 +318,10 @@ export class Relay {
 			if (binding.botId !== bot) continue;
 			try {
 				let newest: FeishuMessage | undefined;
+				// A missed command is stale: it neither runs nor triggers a delivery.
 				for await (const message of history(port, binding.chatId, binding.cursor))
-					if (message.author.id !== port.botId && wakes(binding, message)) newest = message;
+					if (message.author.id !== port.botId && wakes(binding, message) && !isCommand(binding, message))
+						newest = message;
 				if (newest) await this.deliver(binding.chatId, newest);
 			} catch (error) {
 				// A chat that went away (or a session that cannot take it) skips only itself.
@@ -458,14 +532,17 @@ class BatchWindow {
 }
 
 /**
- * A batch's text: under the header, one `Name (<open_id>): text` line (or paragraph) per message, oldest first, the
- * bot's mention written `@Pi`, and attachments too large to download named. The attachments to download, keyed by
- * message and position, with where to get them.
+ * A batch's text: under the header, one message per line (or paragraph), oldest first, the bot's mention written
+ * `@Pi`, and attachments too large to download named. A group names each author with their open ID (several people,
+ * and wake lists take the IDs); a direct chat has one person, named by the header alone. `chatType` is the binding's:
+ * a message's own would guess after a restart. The attachments to download, keyed by message and position, with
+ * where to get them.
  */
 export async function batchOf(
 	messages: readonly FeishuMessage[],
 	port: FeishuPort,
 	header: string,
+	chatType: ChatType,
 ): Promise<{ text: string; files: DeliveredFile[] }> {
 	const files: DeliveredFile[] = [];
 	const lines: string[] = [];
@@ -484,13 +561,37 @@ export async function batchOf(
 				});
 			} else notes.push(`[attachment ${attachment.name} (${attachment.size} bytes), not downloaded]`);
 		}
-		// A group names authors with their open IDs (several people, and wake lists take the IDs); a direct chat has
-		// one person: the name alone.
-		const who =
-			message.chatType === "group" ? `${message.author.name} (<${message.author.id}>)` : message.author.name;
-		lines.push(`${who}: ${[message.text, ...notes].filter(Boolean).join("\n")}`);
+		const body = [message.text, ...notes].filter(Boolean).join("\n");
+		lines.push(chatType === "group" ? `${message.author.name} (<${message.author.id}>): ${body}` : body);
 	}
 	return { text: [header, ...lines].join("\n"), files };
+}
+
+/** The slash commands, with what /help says of each. */
+export const COMMANDS = ["help", "new", "projects", "project"] as const;
+export type Command = { name: (typeof COMMANDS)[number]; args: string[] };
+
+const HELP = [
+	"可用指令：",
+	"/new [项目名] — 新建会话，这个聊天切换过去（旧会话保留在 Pi 里）",
+	"/projects — 列出项目",
+	"/project 名字 [路径] — 新建项目（默认路径：当前会话的目录）",
+	"/help — 本列表",
+	"其他消息直接交给 Pi。",
+].join("\n");
+
+/** The command `text` is, if it is one: the bot's mention stripped, `/` plus a known word, then its arguments. */
+export function commandOf(text: string): Command | undefined {
+	const words = text.replaceAll("@Pi", " ").trim().split(/\s+/);
+	const first = words[0] ?? "";
+	if (!first.startsWith("/")) return undefined;
+	const name = COMMANDS.find((known) => known === first.slice(1).toLowerCase());
+	return name === undefined ? undefined : { name, args: words.slice(1) };
+}
+
+/** Whether `message` is a command of `binding` (never delivered to the agent, nor caught up on). */
+function isCommand(binding: Binding, message: FeishuMessage): boolean {
+	return wakes(binding, message) && commandOf(message.text) !== undefined;
 }
 
 /** `text` in pieces of at most `limit` characters, split at a line break where possible, else at a space. */

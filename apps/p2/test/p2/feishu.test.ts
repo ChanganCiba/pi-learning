@@ -7,7 +7,10 @@ import { parseContent } from "../../plugins/feishu/bot.ts";
 import { decodeFrame, encodeFrame, type Frame } from "../../plugins/feishu/connection.ts";
 import type { Binding } from "../../plugins/feishu/contract.ts";
 import {
+	type Command,
+	type CommandPort,
 	chunkText,
+	commandOf,
 	type FeishuMessage,
 	type FeishuPort,
 	MESSAGE_LIMIT,
@@ -168,6 +171,10 @@ class FakeFeishu implements FeishuPort {
 /** A fake session: what it was handed, and the turns' states the test sets. */
 class FakeSessions implements SessionPort {
 	refusal: string | undefined;
+	readonly unlinkedSessions: string[] = [];
+	async unlinked(session: string) {
+		this.unlinkedSessions.push(session);
+	}
 	readonly delivered: Parameters<SessionPort["deliver"]>[1][] = [];
 	readonly turns = new Map<number, TurnState>();
 	readonly bytes = new Map<string, Uint8Array>();
@@ -208,9 +215,22 @@ function setup(initial: Binding = binding()) {
 	let state: RelayState = { bindings: { [initial.chatId]: initial }, pending: {} };
 	const offline = new Set<string>();
 	const errors: string[] = [];
+	const commands: CommandPort = {
+		location: async () => ({ cwd: "/work", env: null }),
+		createSession: async ({ project }) => {
+			commandCalls.push(`create:${project ?? ""}`);
+			return { id: "s2", title: "Fresh" };
+		},
+		projects: async () => [{ name: "learning", path: "/learn" }],
+		createProject: async (name, path) => {
+			commandCalls.push(`project:${name}:${path}`);
+		},
+	};
+	const commandCalls: string[] = [];
 	const relay = new Relay(
 		(bot) => (offline.has(bot) ? undefined : feishu),
 		sessions,
+		commands,
 		{
 			value: () => state,
 			change: async (update) => {
@@ -221,7 +241,7 @@ function setup(initial: Binding = binding()) {
 		},
 		(error) => errors.push(error),
 	);
-	return { feishu, sessions, relay, offline, errors, state: () => state };
+	return { feishu, sessions, relay, offline, errors, commandCalls, state: () => state };
 }
 
 describe("feishu relay", () => {
@@ -376,10 +396,30 @@ describe("feishu relay", () => {
 		const { feishu, sessions, relay } = setup(binding({ chatId: "p1", chatType: "p2p", chatName: "Ann" }));
 		const wake = feishu.say("p1", message("hi", { chatId: "p1", chatType: "p2p" }));
 		await relay.onMessage("bot-a", wake);
-		assert.match(sessions.delivered[0]?.text ?? "", /\nAnn: hi$/);
+		assert.match(sessions.delivered[0]?.text ?? "", /delivery\]\nhi$/);
 		sessions.turns.set(1, { state: "answered", text: "done", thinking: "step one\nstep two", files: [], answer: 1 });
 		await relay.checkPending();
 		assert.equal([...feishu.notices.values()][0]?.text, "> step one\n> step two\n\ndone");
+	});
+
+	it("runs slash commands instead of delivering, and /new switches the chat's session", async () => {
+		const { feishu, sessions, relay, commandCalls, state } = setup();
+		assert.deepEqual(commandOf("@Pi /help"), { name: "help", args: [] } satisfies Command);
+		assert.equal(commandOf("/etc/hosts 怎么改"), undefined);
+		await relay.onMessage("bot-a", feishu.say("g1", message("@Pi /help")));
+		assert.equal(sessions.delivered.length, 0);
+		assert.match(feishu.posted[0]?.text ?? "", /^可用指令：/);
+		await relay.onMessage("bot-a", feishu.say("g1", message("@Pi /projects")));
+		assert.match(feishu.posted[1]?.text ?? "", /learning（\/learn）/);
+		await relay.onMessage("bot-a", feishu.say("g1", message("@Pi /new learning")));
+		assert.deepEqual(commandCalls, ["create:learning"]);
+		assert.equal(state().bindings.g1?.session, "s2");
+		assert.deepEqual(sessions.unlinkedSessions, ["s1"]);
+		assert.match(feishu.posted[2]?.text ?? "", /已新建会话「Fresh」/);
+		// The command messages stay out of the next batch.
+		const wake = feishu.say("g1", message("@Pi now work"));
+		await relay.onMessage("bot-a", wake);
+		assert.doesNotMatch(sessions.delivered[0]?.text ?? "", /\/help|\/projects|\/new/);
 	});
 
 	it("splits text at line breaks within the limit", () => {

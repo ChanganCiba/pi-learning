@@ -61,13 +61,20 @@ function SessionRow() {
 	);
 }
 
-/** A batch's note in the transcript: where it came from. */
+/** A batch in the transcript: the person's words as their own bubble (the `[Feishu …]` header is the model's). */
 function batchDisplay(data: unknown) {
-	const feishu = (data as { feishu?: { chat?: unknown; chatType?: unknown; messages?: unknown } } | null)?.feishu;
+	const entry = data as { text?: unknown; feishu?: { chat?: unknown; chatType?: unknown; messages?: unknown } } | null;
+	const feishu = entry?.feishu;
 	if (!feishu || typeof feishu.chat !== "string") return undefined;
 	const where = feishu.chatType === "group" ? `group ${feishu.chat}` : `chat with ${feishu.chat}`;
 	const count = typeof feishu.messages === "number" ? feishu.messages : 0;
-	return { note: `Feishu ${where} · ${count} message${count === 1 ? "" : "s"}` };
+	const raw = typeof entry?.text === "string" ? entry.text : "";
+	const body = raw.startsWith("[") ? raw.slice(raw.indexOf("]") + 1).trim() : raw;
+	return {
+		note: `Feishu ${where} · ${count} message${count === 1 ? "" : "s"}`,
+		...(body ? { text: body } : {}),
+		bubble: true,
+	};
 }
 
 export default defineFacet((host) => {

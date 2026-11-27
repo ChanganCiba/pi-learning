@@ -17,11 +17,12 @@ import {
 	sleep,
 } from "@p2/app/v1";
 import { Server, serverOf } from "@p2/app/v1/server";
-import { Catalog } from "../sessions/contract.ts";
+import { ProjectService } from "../projects/contract.ts";
+import { Catalog, SessionOperations } from "../sessions/contract.ts";
 import { StatusStore } from "../status/contract.ts";
 import { BindingSchema, Feishu, FeishuIngress, FeishuStore, PendingSchema } from "./contract.ts";
 import { Fleet } from "./fleet.ts";
-import { Relay, type RelayState, type SessionPort } from "./relay.ts";
+import { type CommandPort, Relay, type RelayState, type SessionPort } from "./relay.ts";
 
 const State = defineState("p2.feishu-bindings", {
 	schema: obj({
@@ -56,6 +57,8 @@ export default defineFacet((host) => {
 	host.serve(FeishuStore, (_params, self) => {
 		const server = self.get(Server, {});
 		const catalog = self.get(Catalog, {});
+		const operations = self.get(SessionOperations, {});
+		const projectService = self.get(ProjectService, {});
 		const statuses = self.get(StatusStore, {});
 		const state = self.state(State);
 		const fleet = self.open(
@@ -84,14 +87,38 @@ export default defineFacet((host) => {
 			natives().root(async (ctx) => call(await ctx.get(FeishuIngress, { session }), ctx), BACKGROUND_CONTEXT);
 		const sessions: SessionPort = {
 			usable,
+			unlinked: async (session) => {
+				const row = catalog.sessions.value.find((entry) => entry.id === session);
+				if (row && row.archivedAt === null) await ingress(session, (worker, ctx) => worker.unlinked(ctx));
+			},
 			deliver: (session, input) => ingress(session, (worker, ctx) => worker.deliver(input, ctx)),
 			turn: (session, submissionId) => ingress(session, (worker, ctx) => worker.turn({ submissionId }, ctx)),
 			read: (session, id, offset, length) =>
 				ingress(session, (worker, ctx) => worker.read({ id, offset, length }, ctx)),
 		};
+		const commands: CommandPort = {
+			location: async (session) => {
+				const row = catalog.sessions.value.find((entry) => entry.id === session);
+				return row ? { cwd: row.cwd, env: row.env ?? null } : undefined;
+			},
+			createSession: async ({ cwd, env, project }) => {
+				const row = await operations.create({ cwd, env }, during());
+				if (project !== null) await projectService.assign({ session: row.id, project }, during());
+				return { id: row.id, title: row.title || "New session" };
+			},
+			projects: async () =>
+				projectService.projects.value.map((project) => ({
+					name: project.name,
+					path: project.places[0]?.path ?? "",
+				})),
+			createProject: async (name, path) => {
+				await projectService.create({ name, place: { env: null, path } }, during());
+			},
+		};
 		const relay = new Relay(
 			(bot) => fleet.value.connected(bot),
 			sessions,
+			commands,
 			{
 				// The state's drafts are the same JSON as the relay's plain records.
 				value: () => state.value as RelayState,
