@@ -4,12 +4,14 @@
 //
 //   page → app  { type: "theme" }                        reply { preference }
 //   page → app  { type: "set-theme", preference }        stores, applies, reply { preference }
+//   page → app  { type: "choose-folder", path }          the folder dialog over the window, reply { path } (null: cancelled)
 //   app → page  CustomEvent "pi-host-theme", detail { preference }   after every change, to all pages of all windows
 //   app → page  CustomEvent "pi-host-menu", detail { item }           a menu item p2 carries out ("settings")
 //
 // The resolved scheme is never sent: the page reads it from `matchMedia`, which follows the app's appearance. WebKit
 // exposes the handler to every frame of the page, not only the main one: it is answered for the main frame of a page
-// on the brain's own origin only, and refuses everything else. The worst a page can do is change the appearance.
+// on the brain's own origin only, and refuses everything else. The worst a page can do is change the appearance or
+// show the folder dialog.
 import WebKit
 
 @MainActor
@@ -60,6 +62,12 @@ enum HostBridge {
 				}
 				page.app.setAppearance(next)
 				replyHandler(["preference": page.app.appearance.rawValue], nil)
+			case "choose-folder":
+				let start = body?["path"] as? String
+				Task { @MainActor in
+					let chosen = await page.chooseFolder(startingAt: start)
+					replyHandler(["path": chosen as Any], nil)
+				}
 			default:
 				replyHandler(nil, "piHost: unknown message")
 			}

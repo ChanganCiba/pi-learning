@@ -301,6 +301,28 @@ final class BrainPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadD
 		return await panel.beginSheetModal(for: window) == .OK ? panel.urls : nil
 	}
 
+	/// The folder dialog over the window, starting at `path` when it is a folder (`~` expanded); the chosen folder's
+	/// path, or nil when cancelled or without a window (the bridge's `choose-folder`).
+	func chooseFolder(startingAt path: String?) async -> String? {
+		guard let window else { return nil }
+		let panel = NSOpenPanel()
+		panel.canChooseDirectories = true
+		panel.canChooseFiles = false
+		panel.canCreateDirectories = true
+		panel.allowsMultipleSelection = false
+		panel.prompt = "Choose"
+		panel.message = "Choose a folder for Pi to work in"
+		if let path {
+			let expanded = (path as NSString).expandingTildeInPath
+			var isDirectory: ObjCBool = false
+			if FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue {
+				panel.directoryURL = URL(fileURLWithPath: expanded, isDirectory: true)
+			}
+		}
+		guard await panel.beginSheetModal(for: window) == .OK, let url = panel.url else { return nil }
+		return url.path
+	}
+
 	func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async {
 		_ = await alert(message, buttons: ["OK"])
 	}
