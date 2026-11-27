@@ -119,6 +119,25 @@ class FakeFeishu implements FeishuPort {
 	readonly history = new Map<string, FeishuMessage[]>();
 	readonly posted: { chat: string; replyTo: string | undefined; text: string; files?: string[] }[] = [];
 	readonly requests: { chat: string; after: number }[] = [];
+	readonly reacted: { message: string; emoji: string }[] = [];
+	async react(messageId: string, emoji: string) {
+		this.reacted.push({ message: messageId, emoji });
+	}
+	/** Thinking cards by ID, with what they were patched into. */
+	readonly notices = new Map<string, { replyTo: string; outcome?: string; text?: string }>();
+	noticesFail = false;
+	async notice(_chat: string, messageId: string): Promise<string> {
+		if (this.noticesFail) throw new Error("no permission");
+		const id = `n${this.notices.size + 1}`;
+		this.notices.set(id, { replyTo: messageId });
+		return id;
+	}
+	async settle(noticeId: string, outcome: "green" | "red", text: string) {
+		const known = this.notices.get(noticeId);
+		if (!known) throw new Error("gone");
+		known.outcome = outcome;
+		known.text = text;
+	}
 	say(chat: string, entry: FeishuMessage): FeishuMessage {
 		const said = { ...entry, chatId: chat };
 		this.history.set(chat, [...(this.history.get(chat) ?? []), said]);
@@ -241,6 +260,7 @@ describe("feishu relay", () => {
 			input?.files.map((file) => [file.key, file.url]),
 			[[`feishu:${wake.id}:0`, `https://feishu.test/${wake.id}/img_1?type=image`]],
 		);
+		assert.deepEqual(feishu.reacted, [{ message: wake.id, emoji: "OK" }]);
 		assert.equal(state().bindings.g1?.cursor, wake.createdAt);
 		assert.equal(Object.keys(state().pending).length, 1);
 		// The turn ends: the answer goes back as the reply to the waking message, in cards.
@@ -252,10 +272,14 @@ describe("feishu relay", () => {
 		});
 		sessions.bytes.set("f1", new TextEncoder().encode("abc"));
 		await relay.checkPending();
+		// The thinking card became the answer's first card; the rest are their own messages.
+		assert.deepEqual(
+			[...feishu.notices.values()].map((notice) => [notice.replyTo, notice.outcome, notice.text?.length]),
+			[[wake.id, "green", MESSAGE_LIMIT]],
+		);
 		assert.deepEqual(
 			feishu.posted.map((post) => [post.replyTo, post.text.length, post.files]),
 			[
-				[wake.id, MESSAGE_LIMIT, undefined],
 				[undefined, 10, undefined],
 				[undefined, 0, ["out.txt"]],
 			],
@@ -269,6 +293,16 @@ describe("feishu relay", () => {
 		assert.equal(sessions.delivered.length, 0);
 		await relay.onMessage("bot-b", feishu.say("g1", message("@Pi other bot")));
 		assert.equal(sessions.delivered.length, 0);
+	});
+
+	it("replies on its own when the thinking card could not be posted", async () => {
+		const { feishu, sessions, relay } = setup();
+		feishu.noticesFail = true;
+		const wake = feishu.say("g1", message("@Pi hi"));
+		await relay.onMessage("bot-a", wake);
+		sessions.turns.set(1, { state: "answered", text: "plain", files: [], answer: 1 });
+		await relay.checkPending();
+		assert.deepEqual(feishu.posted, [{ chat: "g1", replyTo: wake.id, text: "plain" }]);
 	});
 
 	it("answers a session that cannot take the batch with a notice", async () => {
@@ -303,14 +337,25 @@ describe("feishu relay", () => {
 		sessions.turns.set(1, { state: "answered", text: "shared", files: [], answer: 5 });
 		sessions.turns.set(2, { state: "answered", text: "shared", files: [], answer: 5 });
 		await relay.checkPending();
-		assert.deepEqual(feishu.posted, [{ chat: "g1", replyTo: second.id, text: "shared" }]);
+		// The answer patches the newest wake's thinking card once; the first wake's card stays as it was.
+		assert.deepEqual(
+			[...feishu.notices.values()].map((notice) => [notice.replyTo, notice.outcome, notice.text]),
+			[
+				[first.id, undefined, undefined],
+				[second.id, "green", "shared"],
+			],
+		);
 		const third = feishu.say("g1", message("@Pi c"));
 		await relay.onMessage("bot-a", third);
 		const pending = state().pending[third.id];
 		assert(pending);
 		pending.since -= PENDING_TIMEOUT_MS + 1;
 		await relay.checkPending();
-		assert.equal(feishu.posted.at(-1)?.text, "(No answer: the session did not answer in time.)");
+		assert.deepEqual([...feishu.notices.values()].at(-1), {
+			replyTo: third.id,
+			outcome: "red",
+			text: "(No answer: the session did not answer in time.)",
+		});
 	});
 
 	it("keeps a reply while its bot is offline", async () => {
@@ -324,7 +369,17 @@ describe("feishu relay", () => {
 		assert.equal(Object.keys(state().pending).length, 1);
 		offline.delete("bot-a");
 		await relay.checkPending();
-		assert.deepEqual(feishu.posted, [{ chat: "g1", replyTo: wake.id, text: "later" }]);
+		assert.deepEqual([...feishu.notices.values()], [{ replyTo: wake.id, outcome: "green", text: "later" }]);
+	});
+
+	it("names authors without IDs in a direct chat and quotes thinking above the answer", async () => {
+		const { feishu, sessions, relay } = setup(binding({ chatId: "p1", chatType: "p2p", chatName: "Ann" }));
+		const wake = feishu.say("p1", message("hi", { chatId: "p1", chatType: "p2p" }));
+		await relay.onMessage("bot-a", wake);
+		assert.match(sessions.delivered[0]?.text ?? "", /\nAnn: hi$/);
+		sessions.turns.set(1, { state: "answered", text: "done", thinking: "step one\nstep two", files: [], answer: 1 });
+		await relay.checkPending();
+		assert.equal([...feishu.notices.values()][0]?.text, "> step one\n> step two\n\ndone");
 	});
 
 	it("splits text at line breaks within the limit", () => {

@@ -37,10 +37,10 @@ export type Download = {
 /** A file the agent offered in a turn (`send_file`): the session's download. */
 export type Offered = { id: string; name: string; size: number };
 
-/** How a submission's turn ended, as the bridges post it. */
+/** How a submission's turn ended, as the bridges post it; `thinking` is the answer's reasoning, when it has any. */
 export type TurnState =
 	| { state: "pending" }
-	| { state: "answered"; text: string; files: Offered[]; answer: number }
+	| { state: "answered"; text: string; thinking?: string; files: Offered[]; answer: number }
 	| { state: "stopped" }
 	| { state: "unanswered"; reason: string; files: Offered[] };
 
@@ -161,9 +161,13 @@ export async function readTurn(
 		.flatMap((part) => (part.type === "text" ? [part.text] : []))
 		.join("")
 		.trim();
+	const thinking = (message?.content ?? [])
+		.flatMap((part) => (part.type === "thinking" && !part.redacted ? [part.thinking] : []))
+		.join("\n")
+		.trim();
 	const sent = await offered(files, offeredBy, record.conversationId, start, message?.timestamp ?? Date.now(), ctx);
 	return text || sent.length
-		? { state: "answered", text, files: sent, answer: record.answer }
+		? { state: "answered", text, ...(thinking ? { thinking } : {}), files: sent, answer: record.answer }
 		: {
 				state: "unanswered",
 				reason:

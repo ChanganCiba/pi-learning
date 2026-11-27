@@ -168,10 +168,15 @@ export class FeishuApi {
 		return { items, next: data.has_more ? data.page_token : undefined };
 	}
 
-	/** Posts `text` as a card with Markdown to `chatId`, as a reply to `messageId` when given. */
-	async sendText(chatId: string, messageId: string | undefined, text: string): Promise<void> {
-		const card = { config: { wide_screen_mode: true }, elements: [{ tag: "markdown", content: text }] };
-		await this.#send(chatId, messageId, "interactive", JSON.stringify(card));
+	/** Posts `card` to `chatId`, as a reply to `messageId` when given: the message's ID (for a later patch). */
+	async sendCard(chatId: string, messageId: string | undefined, card: object): Promise<string> {
+		const data = await this.#send(chatId, messageId, "interactive", JSON.stringify(card));
+		return data.message_id ?? "";
+	}
+
+	/** Replaces card message `messageId`'s content in place (the card must have been sent with `update_multi`). */
+	async patchCard(messageId: string, card: object): Promise<void> {
+		await this.#call("PATCH", `/open-apis/im/v1/messages/${messageId}`, { content: JSON.stringify(card) });
 	}
 
 	/** Uploads `file` and posts it (an image as an image, else as a file). */
@@ -195,25 +200,52 @@ export class FeishuApi {
 		await this.#send(chatId, messageId, "file", JSON.stringify({ file_key: data.file_key }));
 	}
 
+	/** A Card 2.0: a colored header with a tag, Markdown elements; patchable in place (`update_multi`). */
+	card(header: { title: string; template: "grey" | "green" | "red"; tag: string }, markdown: string): object {
+		return {
+			schema: "2.0",
+			config: { wide_screen_mode: true, update_multi: true },
+			header: {
+				title: { tag: "plain_text", content: header.title },
+				template: header.template,
+				text_tag_list: [
+					{ tag: "text_tag", text: { tag: "plain_text", content: header.tag }, color: header.template },
+				],
+			},
+			body: { direction: "vertical", elements: [{ tag: "markdown", content: markdown }] },
+		};
+	}
+
+	/** Reacts to a message with `emojiType` (the "GET" thumb, say): the chat sees it at once. */
+	async react(messageId: string, emojiType: string): Promise<void> {
+		await this.#call("POST", `/open-apis/im/v1/messages/${messageId}/reactions`, {
+			reaction_type: { emoji_type: emojiType },
+		});
+	}
+
 	/** Where a message's image or file is downloaded from (with `authorization()`). */
 	resourceUrl(messageId: string, key: string, type: "image" | "file"): string {
 		return `${this.#domain}/open-apis/im/v1/messages/${messageId}/resources/${key}?type=${type}`;
 	}
 
-	async #send(chatId: string, messageId: string | undefined, msgType: string, content: string): Promise<void> {
+	async #send(
+		chatId: string,
+		messageId: string | undefined,
+		msgType: string,
+		content: string,
+	): Promise<{ message_id?: string }> {
 		if (messageId)
-			await this.#call("POST", `/open-apis/im/v1/messages/${messageId}/reply`, { msg_type: msgType, content });
-		else
-			await this.#call("POST", "/open-apis/im/v1/messages?receive_id_type=chat_id", {
-				receive_id: chatId,
-				msg_type: msgType,
-				content,
-			});
+			return this.#call("POST", `/open-apis/im/v1/messages/${messageId}/reply`, { msg_type: msgType, content });
+		return this.#call("POST", "/open-apis/im/v1/messages?receive_id_type=chat_id", {
+			receive_id: chatId,
+			msg_type: msgType,
+			content,
+		});
 	}
 
 	/** One call: `data` of Feishu's envelope (or the whole envelope), or the error it names. */
 	async #call<T>(
-		method: "GET" | "POST",
+		method: "GET" | "POST" | "PATCH",
 		path: string,
 		body?: FormData | object,
 		shape: "data" | "envelope" = "data",

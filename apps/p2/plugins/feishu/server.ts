@@ -1,7 +1,7 @@
 // The feishu plugin's server facet: the owner's bots (fleet.ts, credentials in `<data>/feishu.json`), the links of
 // sessions to chats with their cursors and pending replies (persisted), the relay between them (relay.ts), and the
 // owner's `Feishu` view. A linked session stays where it is: this bridge is the owner's own.
-import { obj } from "@earendil-works/pi-schema";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import {
 	BACKGROUND_CONTEXT,
 	type Ctx,
@@ -24,12 +24,27 @@ import { Fleet } from "./fleet.ts";
 import { Relay, type RelayState, type SessionPort } from "./relay.ts";
 
 const State = defineState("p2.feishu-bindings", {
-	schema: obj({ bindings: record(BindingSchema), pending: record(PendingSchema) }),
-	version: 1,
-	initial: () => ({ bindings: {}, pending: {} }),
+	schema: obj({
+		bindings: record(BindingSchema),
+		pending: record(PendingSchema),
+		/** Direct chats that wrote to a bot, by chat ID: a p2p chat cannot be listed, only remembered. */
+		seen: record(obj({ botId: str(), name: str(), at: num() })),
+	}),
+	// 2: `seen` persists across restarts (it lived in the bot's memory). 3: a pending reply's `noticeId`.
+	version: 3,
+	initial: () => ({ bindings: {}, pending: {}, seen: {} }),
+	migrate: (old, from) => {
+		if (from === 1) return { ...(old as { bindings: object; pending: object }), seen: {} } as never;
+		// 2 → 3 only names the optional `noticeId`: the stored values are valid as they are.
+		if (from === 2) return old as never;
+		throw new Error(`Unknown p2.feishu-bindings version ${from}`);
+	},
 	persist: true,
 	checkpointWhen: () => true,
 });
+
+/** Direct chats remembered at most (the oldest forgotten). */
+const SEEN_CHATS = 50;
 
 /** Pending turns are checked this often anyway (their session's status change checks them at once). */
 const CHECK_MS = 15_000;
@@ -91,6 +106,13 @@ export default defineFacet((host) => {
 				const received = await fleet.value.next(signalOf(ctx));
 				if (!received) return;
 				const { bot, event } = received;
+				// A direct chat is remembered when someone writes in it: the link form offers it, restarts included.
+				if (event.kind === "message" && event.message.chatType === "p2p")
+					await state.change((draft) => {
+						draft.seen[event.message.chatId] = { botId: bot, name: event.message.author.name, at: Date.now() };
+						const all = Object.entries(draft.seen).sort(([, a], [, b]) => a.at - b.at);
+						for (const [chat] of all.slice(0, Math.max(0, all.length - SEEN_CHATS))) delete draft.seen[chat];
+					}, ctx);
 				await (event.kind === "message" ? relay.onMessage(bot, event.message) : relay.catchUp(bot)).catch(
 					(error: unknown) => report(errorText(error)),
 				);
@@ -150,7 +172,15 @@ export default defineFacet((host) => {
 				await fleet.value.remove(bot);
 				return null;
 			},
-			chats: ({ bot }) => connected(bot).chats(),
+			chats: async ({ bot }) => {
+				const listed = await connected(bot).chats();
+				// The persisted direct chats too (the bot's own memory is empty after a restart), newest first.
+				const remembered = Object.entries(state.value.seen)
+					.filter(([chat, entry]) => entry.botId === bot && !listed.some((known) => known.id === chat))
+					.sort(([, a], [, b]) => b.at - a.at)
+					.map(([chat, entry]) => ({ id: chat, name: entry.name, type: "p2p" as const }));
+				return [...listed, ...remembered];
+			},
 			link: async ({ session, bot, chat: chatId, wake }, ctx) => {
 				const bindings = Object.values(state.value.bindings);
 				if (bindings.some((binding) => binding.session === session))

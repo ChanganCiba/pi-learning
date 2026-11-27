@@ -26,6 +26,12 @@ export type FeishuPort = {
 		afterMs: number,
 		next?: string,
 	): Promise<{ items: FeishuMessage[]; next: string | undefined }>;
+	/** Reacts to a message (the wake's acknowledgment). */
+	react(messageId: string, emojiType: string): Promise<void>;
+	/** Posts the grey "thinking" card as the reply to `messageId`: its ID, to settle when the turn ends. */
+	notice(chatId: string, messageId: string): Promise<string>;
+	/** Patches notice `noticeId` into the turn's outcome (the first card of the answer). */
+	settle(noticeId: string, outcome: "green" | "red", text: string): Promise<void>;
 	/** Posts `text` (may be empty with files), then each file, as replies to `messageId` when given. */
 	reply(
 		chatId: string,
@@ -43,7 +49,7 @@ export type FeishuPort = {
 
 export type TurnState =
 	| { state: "pending" }
-	| { state: "answered"; text: string; files: OfferedFile[]; answer: number }
+	| { state: "answered"; text: string; thinking?: string; files: OfferedFile[]; answer: number }
 	| { state: "stopped" }
 	| { state: "unanswered"; reason: string; files: OfferedFile[] };
 
@@ -91,6 +97,8 @@ export const MESSAGE_LIMIT = 4000;
 /** Attachments up to this size are downloaded into the session; larger ones are named only. */
 export const MAX_ATTACHMENT = 25 * 1024 * 1024;
 const MAX_FILES = 20;
+/** The answer's reasoning is quoted up to this many characters. */
+const THINKING_LIMIT = 600;
 /** A pending reply older than this is dropped with a notice: its turn is not going to end on its own. */
 export const PENDING_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 /** Answers kept in mind as posted, to post a run's answer once however its inputs settle. */
@@ -165,6 +173,15 @@ export class Relay {
 		if (refusal) return port.reply(chatId, trigger.id, `Pi is not listening here right now: ${refusal}`);
 		// Delivered already (a catch-up, then the same message replayed by a reconnection).
 		if (binding.cursor !== null && trigger.createdAt <= binding.cursor) return;
+		// The wake is acknowledged at once: a reaction on the message, and a grey "thinking" card that the answer
+		// patches in place (one bubble start to finish). Best effort: a chat that takes neither still gets the answer.
+		await port.react(trigger.id, "OK").catch(() => {});
+		let noticeId: string | undefined;
+		try {
+			noticeId = (await port.notice(chatId, trigger.id)) || undefined;
+		} catch {
+			// Without the card, the answer arrives as its own reply.
+		}
 		// Everything since the cursor; only the newest BATCH_CAP go into the input. Without the history permission
 		// (im:message.group_msg), the batch is the trigger alone: the wake still works, the gap is reported.
 		const window = new BatchWindow(BATCH_CAP);
@@ -212,6 +229,7 @@ export class Relay {
 				chatId,
 				messageId: trigger.id,
 				createdAt: trigger.createdAt,
+				...(noticeId === undefined ? {} : { noticeId }),
 				submissionId: delivered.submissionId,
 				since: Date.now(),
 			};
@@ -326,12 +344,32 @@ export class Relay {
 		turn: Extract<TurnState, { state: "answered" | "unanswered" }>,
 	): Promise<void> {
 		let text = turn.state === "answered" ? turn.text : `(No answer: ${turn.reason})`;
+		// The answer's reasoning, quoted and cut short, above the answer: the chat sees how Pi got there.
+		if (turn.state === "answered" && turn.thinking) {
+			const short =
+				turn.thinking.length > THINKING_LIMIT ? `${turn.thinking.slice(0, THINKING_LIMIT)}…` : turn.thinking;
+			text = `${short
+				.split("\n")
+				.map((line) => `> ${line}`)
+				.join("\n")}\n\n${text}`;
+		}
 		const tooLarge = turn.files.filter((file) => file.size > UPLOAD_LIMIT);
 		if (tooLarge.length)
 			text += `${text ? "\n\n" : ""}Too large for Feishu: ${tooLarge.map((file) => `${file.name} (${megabytes(file.size)})`).join(", ")}`;
 		const chunks = chunkText(text);
-		for (const [index, chunk] of chunks.entries())
+		for (const [index, chunk] of chunks.entries()) {
+			// The first chunk becomes the thinking card's content (the one bubble turns into the answer); a card that
+			// cannot be patched any more falls back to a reply of its own.
+			if (index === 0 && pending.noticeId !== undefined) {
+				try {
+					await port.settle(pending.noticeId, turn.state === "answered" ? "green" : "red", chunk);
+					continue;
+				} catch {
+					// Fall through to the plain reply.
+				}
+			}
 			await port.reply(pending.chatId, index === 0 ? pending.messageId : undefined, chunk);
+		}
 		for (const file of turn.files) {
 			if (file.size > UPLOAD_LIMIT) continue;
 			try {
@@ -446,9 +484,11 @@ export async function batchOf(
 				});
 			} else notes.push(`[attachment ${attachment.name} (${attachment.size} bytes), not downloaded]`);
 		}
-		lines.push(
-			`${message.author.name} (<${message.author.id}>): ${[message.text, ...notes].filter(Boolean).join("\n")}`,
-		);
+		// A group names authors with their open IDs (several people, and wake lists take the IDs); a direct chat has
+		// one person: the name alone.
+		const who =
+			message.chatType === "group" ? `${message.author.name} (<${message.author.id}>)` : message.author.name;
+		lines.push(`${who}: ${[message.text, ...notes].filter(Boolean).join("\n")}`);
 	}
 	return { text: [header, ...lines].join("\n"), files };
 }

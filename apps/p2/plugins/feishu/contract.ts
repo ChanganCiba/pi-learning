@@ -41,6 +41,8 @@ export const PendingSchema = obj({
 	messageId: str(),
 	/** The waking message's creation time (ms): inputs of one run reply to the newest. */
 	createdAt: num(),
+	/** The grey thinking card posted at the wake, patched into the answer (absent: it could not be posted). */
+	noticeId: opt(str()),
 	submissionId: num(),
 	since: num(),
 });
@@ -148,7 +150,13 @@ export const FeishuIngress = remote("p2.feishu-ingress", {
 					obj({ submissionId: num() }),
 					union([
 						obj({ state: literal("pending") }),
-						obj({ state: literal("answered"), text: str(), files: arr(OfferedFileSchema), answer: num() }),
+						obj({
+							state: literal("answered"),
+							text: str(),
+							thinking: opt(str()),
+							files: arr(OfferedFileSchema),
+							answer: num(),
+						}),
 						obj({ state: literal("stopped") }),
 						obj({ state: literal("unanswered"), reason: str(), files: arr(OfferedFileSchema) }),
 					]),

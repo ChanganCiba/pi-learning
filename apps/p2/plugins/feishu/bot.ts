@@ -20,6 +20,7 @@ export class Bot implements FeishuPort {
 	#api: FeishuApi | undefined;
 	#connection: Connection | undefined;
 	#openId = "";
+	#appId = "";
 	readonly #listeners = new Set<() => void>();
 	readonly #onEvent: (event: BotEvent) => void;
 	readonly #report: (error: string) => void;
@@ -70,8 +71,11 @@ export class Bot implements FeishuPort {
 			domain: FEISHU_DOMAIN,
 			onEvent: (event) => {
 				if (this.#connection !== connection) return;
-				if (event.kind === "ready") this.#onEvent({ kind: "ready" });
-				else void this.#event(event.body);
+				// The first connection's ready fires while the status is still "connecting" (connect() is setting it):
+				// that catch-up is pushed below, once the status says connected.
+				if (event.kind === "ready") {
+					if (this.status.state === "connected") this.#onEvent({ kind: "ready" });
+				} else void this.#event(event.body);
 			},
 			onError: (error, terminal) => {
 				if (this.#connection !== connection) return;
@@ -82,6 +86,7 @@ export class Bot implements FeishuPort {
 		this.#api = api;
 		this.#connection = connection;
 		this.#openId = identity.openId;
+		this.#appId = appId;
 		const started = await connection.start();
 		if (this.#connection !== connection) return this.status;
 		if (!started.ok && started.terminal) {
@@ -95,6 +100,8 @@ export class Bot implements FeishuPort {
 			openId: identity.openId,
 			...(identity.avatarUrl ? { avatarUrl: identity.avatarUrl } : {}),
 		});
+		// The connection is up and the status says so: now the catch-up can run.
+		if (started.ok) this.#onEvent({ kind: "ready" });
 		return this.status;
 	}
 
@@ -134,7 +141,8 @@ export class Bot implements FeishuPort {
 		const page = await this.#client().messages(chatId, afterMs, next);
 		const chatType = this.#seen.has(chatId) ? "p2p" : "group";
 		const items: FeishuMessage[] = [];
-		for (const item of page.items) items.push(await this.#message(item, chatType));
+		// The bot's own posts (cards it sent as an app) are its answers, never input.
+		for (const item of page.items) if (!this.#own(item)) items.push(await this.#message(item, chatType));
 		return { items, next: page.next };
 	}
 
@@ -145,8 +153,36 @@ export class Bot implements FeishuPort {
 		files: readonly { name: string; data: Uint8Array }[] = [],
 	): Promise<void> {
 		const api = this.#client();
-		if (text) await api.sendText(chatId, messageId, text);
+		if (text) await api.sendCard(chatId, messageId, api.card(this.#header("green", "回复"), text));
 		for (const file of files) await api.sendFile(chatId, messageId, file);
+	}
+
+	/** Posts the grey "thinking" card as the reply to `messageId`: its message ID, to patch when the turn ends. */
+	async notice(chatId: string, messageId: string): Promise<string> {
+		const api = this.#client();
+		return api.sendCard(chatId, messageId, api.card(this.#header("grey", "处理中"), "收到，正在处理…"));
+	}
+
+	/** Patches notice `noticeId` into the turn's outcome. */
+	async settle(noticeId: string, outcome: "green" | "red", text: string): Promise<void> {
+		const api = this.#client();
+		await api.patchCard(noticeId, api.card(this.#header(outcome, outcome === "green" ? "回复" : "未完成"), text));
+	}
+
+	#header(
+		template: "grey" | "green" | "red",
+		tag: string,
+	): { title: string; template: "grey" | "green" | "red"; tag: string } {
+		return { title: this.status.state === "connected" ? this.status.name : "Pi", template, tag };
+	}
+
+	async react(messageId: string, emojiType: string): Promise<void> {
+		await this.#client().react(messageId, emojiType);
+	}
+
+	/** Whether a listed message is the bot's own (sent as the app: its sender is the app ID, not the open ID). */
+	#own(item: ApiMessage): boolean {
+		return item.senderId === this.#openId || (item.senderType === "app" && item.senderId === this.#appId);
 	}
 
 	async resource(messageId: string, key: string, type: "image" | "file") {
