@@ -39,6 +39,7 @@ export { type LongPress, type LongPressHandlers, useLongPress } from "../../web/
 export * from "../../web/Markdown.tsx";
 export * from "../../web/menu-components.ts";
 export * from "../../web/model-choice.ts";
+export { chooseFolder, nativeHost } from "../../web/native-host.ts";
 export * from "../../web/navigation.ts";
 export * from "../../web/navigation-components.ts";
 export * from "../../web/new-session.tsx";

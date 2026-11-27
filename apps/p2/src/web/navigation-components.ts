@@ -6,6 +6,7 @@ export {
 	CancelIcon as NavCancelIcon,
 	EditIcon as NavEditIcon,
 	FolderIcon as NavFolderIcon,
+	FolderOpenIcon as NavFolderOpenIcon,
 	KeyboardArrowDownIcon as NavDisclosureIcon,
 	LockIcon as NavLockIcon,
 	MoreHorizIcon as NavMoreIcon,

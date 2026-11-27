@@ -4,10 +4,13 @@
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import {
 	CheckIcon,
+	chooseFolder,
 	NavDisclosureIcon,
 	NavEditIcon,
 	NavFolderIcon,
+	NavFolderOpenIcon,
 	NavLockIcon,
+	nativeHost,
 	QueryCache,
 	Sheet,
 	shortPath,
@@ -170,6 +173,13 @@ export function DirectoryPicker({
 	const recent = recentOf(env);
 	const here = listing?.path ?? directory;
 	const verb = moves ? "Move session to" : "Use";
+	// In p2-mac, this device's folders can be chosen with the system's dialog: it picks the folder outright.
+	const finder = env === null && nativeHost() !== undefined;
+	const chooseInFinder = () => {
+		void chooseFolder(here).then((path) => {
+			if (path !== null) pick(path);
+		});
+	};
 
 	return (
 		<Sheet title={title} onClose={onClose} className="location-sheet">
@@ -247,6 +257,17 @@ export function DirectoryPicker({
 							>
 								<NavEditIcon size={16} />
 							</button>
+							{finder && (
+								<button
+									type="button"
+									className="location-control"
+									aria-label="Choose in Finder"
+									title="Choose in Finder…"
+									onClick={chooseInFinder}
+								>
+									<NavFolderOpenIcon size={16} />
+								</button>
+							)}
 						</>
 					) : (
 						<PathInput

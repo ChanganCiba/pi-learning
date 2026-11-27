@@ -1,4 +1,5 @@
 // The page's colour theme: light or dark, by a preference the outermost host owns (this page, the Radius shell, p2-mac).
+import { nativeHost, type PiHost } from "./native-host.ts";
 import { shellFrame } from "./shell-bridge.ts";
 
 /*
@@ -55,9 +56,6 @@ export type ShellThemeLink = {
 	/** The shell's `theme` message: its preference changed, or the system scheme under "system". */
 	changed(theme: ShellTheme): void;
 };
-
-/** p2-mac's message handler in the page world (with reply: `postMessage` resolves to the app's answer). */
-type PiHost = { postMessage(message: { type: "theme" } | { type: "set-theme"; preference: ThemePreference }): unknown };
 
 /** Who owns the preference (see above), with what each backend tracks of its host. */
 type Backend =
@@ -145,11 +143,6 @@ export function startTheme(): () => void {
 function shellHint(): ThemeScheme | undefined {
 	const hint = document.documentElement.dataset.piShellScheme;
 	return hint === "light" || hint === "dark" ? hint : undefined;
-}
-
-/** p2-mac's bridge, when this page runs in its window. */
-function nativeHost(): PiHost | undefined {
-	return (window as { webkit?: { messageHandlers?: { piHost?: PiHost } } }).webkit?.messageHandlers?.piHost;
 }
 
 function read(): ThemePreference {
